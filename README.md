@@ -1,8 +1,12 @@
 # BDR_MCRT
 Python codes for optical analysis of Beam Down Receivers (BDR) using MonteCarlo Ray Tracing (MCRT) method. This repository contains the modules and example scripts for the work developed in my PhD thesis.
-This repository originally was created to have examples of the codes used in the publication "Optical analysis and optimization of a beam-down receiver for advanced cycle concentrating solar thermal plants" (Applied Thermal Engineering, 2021). These codes are now in the folder '2_Optical_Analysis_old'. New version of the code are in '2_Optical_Analysis'. The main difference between both is that the old version used iterations over datasets and parallelisation. The new code is completely vectorised and therefore quicker.
 
-Folders '4_SBR_Model' and '5_SPR_Models' have the different receiver models. Folder '6_Thermal_Subsys_Optim' is the thermal optimisation (minimising the LCOH), while '7_Overall_Optim_Dispatch' has the dispatch model and the performance simulations under real conditions in Australia.
+This repository originally was created to have examples of the codes used in the publication "Optical analysis and optimization of a beam-down receiver for advanced cycle concentrating solar thermal plants" (Applied Thermal Engineering, 2021). These codes are now in the folder '2_Optical_Analysis_old'.
+
+New versions of the code are in '2_Optical_Analysis'. The main difference between both is that the old version used iterations over datasets and parallelisation. The new code is completely vectorised and therefore quicker.
+
+Additionally, folders '4_SBR_Model' and '5_SPR_Models' have the different receiver models. Folder '6_Thermal_Subsys_Optim' is the thermal optimisation (minimising the LCOH), while '7_Overall_Optim_Dispatch' has the dispatch model and the performance simulations under real conditions in Australia.
+
 The four modules developed in my thesis are:
 - 'BeamDownReceiver.py' in folder '2_Optic_Analysis'. Imported as BDR.
 - 'SolidBlockReceiver.py' in folder '4_SBR_Model'. Imported as SBR.
