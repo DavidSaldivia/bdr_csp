@@ -1,0 +1,19 @@
+
+for (h=20;h<101;h=h+5){
+	var("receiver.0.rec_diameter",10);
+	var("receiver.0.rec_height",  0);
+	var("fluxsim.0.flux_solar_az_in",0);
+	var("fluxsim.0.flux_solar_el_in",66);
+	var("fluxsim.0.flux_model","SolTrace");
+	var("fluxsim.0.aim_method","Simple aim points");
+	var("solarfield.0.tht", h);
+	var("land.0.max_fixed_rad",600.);
+	var("land.0.min_fixed_rad", 25.);
+
+	lay_ok = run_layout();
+	var("receiver.0.rec_diameter",0);
+	sim_ok = run_performance();
+	
+	file_rays = "Dataset_zf_"+to_string(h)+".csv";
+	rename_ok = rename_file("MCRT_TempDataset.csv",file_rays);
+	}

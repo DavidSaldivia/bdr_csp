@@ -1,0 +1,41 @@
+//BaseCase
+height=50;
+var("receiver.0.rec_diameter",0);
+var("receiver.0.rec_height",  0);
+var("fluxsim.0.flux_solar_az_in",0);
+var("fluxsim.0.flux_solar_el_in",65);
+var("fluxsim.0.flux_model","SolTrace");
+var("fluxsim.0.aim_method","Simple aim points");
+var("solarfield.0.tht", height);
+var("land.0.max_fixed_rad",600);
+var("land.0.min_fixed_rad", 25);
+
+//Generating layout and dataset for basecase
+lay_ok = run_layout();
+sim_ok = run_performance();
+file_rays = "SkyGrid_"+to_string(height)+"m/Base_height-"+to_string(height)+".csv";
+rename_ok = rename_file("MCRT_TempDataset.csv",file_rays);
+
+// Combination of azimuth and elevation
+alts= [10,20,25,30,40,50,60,70,80,90];
+azis= [0,5,10,15,20,25,30,45,60,75,90,105,120];
+
+// Simulation
+for (i=0;i<#alts;i++){
+for (j=0;j<#azis;j++){
+	alt = alts[i];
+	azi = azis[j];
+	var("fluxsim.0.flux_solar_el_in",alt);
+	var("fluxsim.0.flux_solar_az_in",azi);
+	
+	var("receiver.0.rec_diameter", 0);
+	var("receiver.0.rec_height",   0);
+	var("fluxsim.0.flux_model","SolTrace");
+	var("fluxsim.0.aim_method","Simple aim points");
+	var("solarfield.0.tht", height);
+
+	sim_ok = run_performance();
+	file_rays = "SkyGrid_"+to_string(height)+"m/alt-"+to_string(alt)+"_azi-"+to_string(azi)+".csv";
+	rename_ok = rename_file("MCRT_TempDataset.csv",file_rays);
+	}
+	}
