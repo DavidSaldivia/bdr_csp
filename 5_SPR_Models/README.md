@@ -1,0 +1,1 @@
+This is the code for the Solid Particle Receivers with Beam-Down optics. Two concepts were tested: a Horizontal Particle Receiver (HPR) using a conveyor belt and a Tilted Particle Receiver (TPR) using granular flow on a tilted surface.
