@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "bdr-csp"
+version = "0.1.0"
+description = "optical, thermal, and financial analysis of BDR-CSP plants"
+authors = ["David Saldivia <david.saldivia.s@gmail.com>"]
+license = "GNU"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pandas = "^2.2.2"
+numpy = "^2.0.1"
+scipy = "^1.14.0"
+Cantera = "^3.0.1"
+
+[tool.poetry.group.dev.dependencies]
+mypy = "^1.11.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
