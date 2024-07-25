@@ -6,32 +6,22 @@ Created on Mon May 25 18:47:41 2020
 
 """
 
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp2d
 import scipy.optimize as spo
-from scipy.integrate import quad
 import cantera as ct
-from functools import partial
 from matplotlib import cm
 import matplotlib.patches as patches
-from mpl_toolkits.mplot3d import Axes3D
-from importlib import reload
-from multiprocessing import Pool
-from os.path import isfile
-import gc
-import BDR
-import AntuPy as AP
 
-#####################################################
-#####################################################
+from bdr_csp import BeamDownReceiver as BDR
+import AntuPy as AP
 
 
 ####################################
 
-def A_rqrd(rO,*args):
+def A_rqrd(rO, *args):
 #This function is to calculate the required area given some
     A_rcv_rq,Dsgn,CST,Cg = args
     xrc,yrc,zrc = CST['xrc'],CST['yrc'],CST['zrc']

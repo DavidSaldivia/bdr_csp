@@ -14,99 +14,24 @@ from scipy.integrate import quad
 import os
 import sys
 
-absFilePath = os.path.abspath(__file__)
-fileDir = os.path.dirname(os.path.abspath(__file__))
-mainDir = os.path.dirname(fileDir)
-newPath = os.path.join(mainDir, '2_Optic_Analysis')
-sys.path.append(newPath)
-
-import BeamDownReceiver as BDR
+from bdr_csp import BeamDownReceiver as BDR
+from bdr_csp import htc
 
 #######################################
 #%% HEAT TRANSFER CORRELATIONS
-#######################################
-def h_conv_Holman(T_s, T_inf, L, fluid):
-    """
-    Correlation for natural convection in upper hot surface horizontal plate Holman
-    T_s, T_inf          : surface and free fluid temperatures [K]
-    L                   : characteristic length [m]
-    """
-    T_av = ( T_s + T_inf )/2
-    fluid.TP = T_av, ct.one_atm
-    mu, k, rho, cp = fluid.viscosity, fluid.thermal_conductivity, fluid.density_mass, fluid.cp_mass
-    alpha = k/(rho*cp)
-    beta = 1./T_s
-    visc = mu/rho
-    Pr = visc/alpha
-    g = 9.81
-    
-    Ra = g * beta * abs(T_s - T_inf) * L**3 * Pr / visc**2
-    if Ra > 1e4 and Ra < 1e7:
-        Nu = 0.54*Ra**0.25
-        h = (k*Nu/L)
-    elif Ra>= 1e7 and Ra < 1e9:
-        Nu = 0.15*Ra**(1./3.)
-        h = (k*Nu/L)
-    else:
-        h = 1.52*(T_s-T_inf)**(1./3.)
-        # print('fuera de Ra range: Ra= '+str(Ra))
-    return h
 
-#######################################
-def h_conv_NellisKlein(T_s, T_inf, L, fluid):
-    """
-    Correlation for natural convection in upper hot surface horizontal plate (Nellis & Klein, 2012).
-    T_s, T_inf          : surface and free fluid temperatures [K]
-    L                   : characteristic length [m]
-    """
-    T_av = ( T_s + T_inf )/2
-    fluid.TP = T_av, ct.one_atm
-    mu, k, rho, cp = fluid.viscosity, fluid.thermal_conductivity, fluid.density_mass, fluid.cp_mass
-    alpha = k/(rho*cp)
-    beta = 1./T_s
-    visc = mu/rho
-    Pr = visc/alpha
-    g = 9.81
-    
-    Ra = g * beta * abs(T_s - T_inf) * L**3 * Pr / visc**2
-    
-    C_lam  = 0.671 / ( 1+ (0.492/Pr)**(9/16) )**(4/9)
-    Nu_lam = 1.4/ np.log(1 + 1.4 / (0.835*C_lam*Ra**0.25) ) 
-    
-    C_tur  = 0.14*(1 + 0.0107*Pr)/(1+0.01*Pr)
-    Nu_tur = C_tur * Ra**(1/3)
-    
-    Nu = (Nu_lam**10 + Nu_tur**10)**(1/10)
-    
-    h = (k*Nu/L)
-    
-    return h
-
-#######################################
-def h_conv_Experiment(T_s, T_inf, L, fluid):
-    """
-    Correlation for natural convection in upper hot surface horizontal plate Holman
-    T_s, T_inf          : surface and free fluid temperatures [K]
-    L                   : characteristic length [m]
-    """
-    T_av = ( T_s + T_inf )/2
-    fluid.TP = T_av, ct.one_atm
-    mu, k, rho, cp = fluid.viscosity, fluid.thermal_conductivity, fluid.density_mass, fluid.cp_mass
-    alpha = k/(rho*cp)
-    beta = 1./T_s
-    visc = mu/rho
-    Pr = visc/alpha
-    g = 9.81
-    
-    Ra = g * beta * abs(T_s - T_inf) * L**3 * Pr / visc**2
-    Nu = 0.26*Ra**0.411*L**(-0.234)
-    h = (k*Nu/L)
-    return h
 ######################################################
 #%% HORIZONTAL PARTICLE RECEIVER (HPR)
 ######################################################
 #############################################
-def HTM_0D_blackbox( Tp, qi, Fc=2.57, air=ct.Solution('air.xml'), HTC='NellisKlein', VF='None' ):
+def HTM_0D_blackbox(
+        Tp: float,
+        qi: float,
+        Fc: float = 2.57,
+        air: ct.Solution = ct.Solution('air.yaml'),
+        HTC: str = 'NellisKlein',
+        view_factor: float | None = None
+    ) -> tuple[float,float,float]:
     """
     Function that obtains an initial estimation for receiver thermal efficiency
 
@@ -128,34 +53,29 @@ def HTM_0D_blackbox( Tp, qi, Fc=2.57, air=ct.Solution('air.xml'), HTC='NellisKle
     Tp = float(Tp)
     Tsky = Tamb -15.
     air.TP = (Tp+Tamb)/2., ct.one_atm
-    if HTC=='NellisKlein':
-        hconv = Fc*h_conv_NellisKlein(Tp, Tamb, 0.01, air)
-    elif HTC=='Holman':
-        hconv = Fc*h_conv_Holman(Tp, Tamb, 0.01, air)
-    elif HTC=='Experiment':
-        hconv = Fc*h_conv_Experiment(Tp, Tamb, 0.1, air)
+    if HTC == 'NellisKlein':
+        hconv = Fc* htc.h_conv_NellisKlein(Tp, Tamb, 0.01, air)
+    elif HTC == 'Holman':
+        hconv = Fc* htc.h_conv_Holman(Tp, Tamb, 0.01, air)
+    elif HTC == 'Experiment':
+        hconv = Fc* htc.h_conv_Experiment(Tp, Tamb, 0.1, air)
     
-    if VF=='None':
-        Fv = 1.0            #View factor
+    if view_factor is None:
+        view_factor = 1.0
     
-    
-    hrad  = Fv*em_p*5.67e-8*(Tp**4.-Tsky**4.)/(Tp-Tamb)
+    hrad  = view_factor * em_p*5.67e-8*(Tp**4.-Tsky**4.)/(Tp-Tamb)
     hcond = 0.833
     hrc = hconv + hrad + hcond
     qloss = hrc * (Tp - Tamb)
-    
     if qi<=0.:
         eta_rcv = 0.
     else:
         eta_rcv = (qi*1e6*ab_p - qloss)/(qi*1e6)
-
     if eta_rcv<0:
         eta_rcv == 0.
-        
-    return eta_rcv,hrad,hconv
+    return (eta_rcv,hrad,hconv)
 
 
-####################################
 def HTM_2D_moving_particles(inputs, f_Qrc1, f_eta, full_output=False):
     
     x_ini, x_fin, y_bot, y_top, P_vel, t_sim, tz, T_ini, TSM = inputs
@@ -251,7 +171,7 @@ def HTM_2D_moving_particles(inputs, f_Qrc1, f_eta, full_output=False):
     else:
         return [ T_B, Qstg1, M_stg1 ]
 
-###########################################################
+
 def HTM_3D_moving_particles(CST,TOD,inputs,f_Qrc1,f_eta,full_output=True):
     
     T_in, tz,TSM,zrc = [CST[x] for x in ['T_pC','tz','TSM','zrc']]
@@ -304,7 +224,6 @@ def HTM_3D_moving_particles(CST,TOD,inputs,f_Qrc1,f_eta,full_output=True):
             alpha_p = k_p/(rho_p*cp_p)
             r_p     = alpha_p * dt / dz**2
         
-        #################################
         
         T_k = T_p.copy()        #Getting the previous elements
         
@@ -351,8 +270,8 @@ def HTM_3D_moving_particles(CST,TOD,inputs,f_Qrc1,f_eta,full_output=True):
     print(T_in,T_p.mean(),T_p.max())
     return T_p, Qstg1, M_stg1, Py_3D
 
-#############################################
-def Get_f_eta():
+
+def get_f_eta():
     Fc = 2.57
     air  = ct.Solution('air.xml')
     Tps = np.arange(700.,2001.,100.)
@@ -364,9 +283,8 @@ def Get_f_eta():
     data = np.array(data)
     return spi.interp2d(data[:,0],data[:,1],data[:,2])     #Function to interpolate
 
-###############################################
 
-def Get_f_Qrc1(xr,yr,lims,P_SF1):
+def get_f_Qrc1(xr,yr,lims,P_SF1):
     
     xmin,xmax,ymin,ymax = lims
     
@@ -382,7 +300,7 @@ def Get_f_Qrc1(xr,yr,lims,P_SF1):
     return f_Qrc1, Q_rc1, X_rc1, Y_rc1
 
 ##############################################
-def Rcvr_HPR_0D_old(CST):
+def rcvr_HPR_0D_old(CST):
     
     ###############################################
     Prcv, Arcv, Tin, Tout, tz  = [CST[x] for x in ['P_rcv','Arcv','T_pC','T_pH', 'tz']]
@@ -420,7 +338,7 @@ def Rcvr_HPR_0D_old(CST):
     return  [eta_rcv, P_SF, Q_av, Tp, t_res, m_p, vx]
 
 ###############################################
-def Rcvr_HPR_0D(CST, Fc=2.57, air=ct.Solution('air.xml')):
+def rcvr_HPR_0D(CST, Fc=2.57, air=ct.Solution('air.yaml')):
     
     ###############################################
     Prcv, Qavg, Tin, Tout, tz  = [CST[x] for x in ['P_rcv','Qavg','T_pC','T_pH', 'tz']]
@@ -444,7 +362,7 @@ def Rcvr_HPR_0D(CST, Fc=2.57, air=ct.Solution('air.xml')):
 
 #############################################
 
-def Rcvr_HPR_2D(CST, SF, R2):
+def rcvr_HPR_2D(CST, SF, R2):
     
     polygon_i= 1
     F_c  = 5.
@@ -464,7 +382,7 @@ def Rcvr_HPR_2D(CST, SF, R2):
     for (Tp,qi) in [(Tp,qi) for Tp in np.arange(700,2001,100) for qi in np.arange(0.25,4.1,0.5)]:
         air.TP = (Tp+Tamb)/2., ct.one_atm
         Tsky = Tamb-15
-        hcov = F_c*h_conv_Holman(Tp, Tamb, 5.0, air)
+        hcov = F_c * htc.h_conv_Holman(Tp, Tamb, 5.0, air)
         hrad = em_p*5.67e-8*(Tp**4-Tsky**4)/(Tp-Tamb)
         hrc  = hcov + hrad
         qloss = hrc * (Tp - Tamb)
@@ -481,8 +399,8 @@ def Rcvr_HPR_2D(CST, SF, R2):
     Q_acc = SF['Q_h1'].cumsum()
     N_hel = len( Q_acc[ Q_acc < P_SF ] ) + 1
         
-    R2a = R2[(R2.hit_rcv)&(R2.Npolygon==polygon_i)].copy()  #Rays into 1 receiver
-    R2b = R2[(R2.hit_rcv)].copy()                           #Total Rays into receivers
+    R2a = R2[(R2["hit_rcv"])&(R2["Npolygon"]==polygon_i)].copy()  #Rays into 1 receiver
+    R2b = R2[R2["hit_rcv"]].copy()                               #Total Rays into receivers
     # N_hel = len(SF)
     it_max = 20;
     it = 1; loop=0;
@@ -552,25 +470,20 @@ def Rcvr_HPR_2D(CST, SF, R2):
         N_hels.append(N_new)
         data.append([Arcv, N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, eta_SF2, Mstg, t_res, n_evals ])
         # print('\t'.join('{:.3f}'.format(x) for x in data[-1]))
-        
         if N_new == N_hel:
             break
-        
         if abs(N_new-N_hel) == 1:
             loop+=1
-        
         if loop==3:
             N_hel = max(N_hel,N_new)
             break
-        
         N_hel = N_new
         it+=1
     
     return T_p, [ N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, Mstg, t_res ]
 
-###########################################################
 
-def Rcvr_HPR_2D_Simple(CST, SF, R2, polygon_i=1,full_output=False):
+def rcvr_HPR_2D_simple(CST, SF, R2, polygon_i=1,full_output=False):
     
     def F_Toutavg(t_res_g,*args):
         x_ini,x_fin,y_bot,y_top,P_vel,t_sim,tz,T_ini,TSM,f_Qrc1,f_eta = args
@@ -588,7 +501,7 @@ def Rcvr_HPR_2D_Simple(CST, SF, R2, polygon_i=1,full_output=False):
         rho_b = 1810
 
     #Particles characteristics
-    f_eta = Get_f_eta()
+    f_eta = get_f_eta()
     
     #Initial guess for number of heliostats
     T_av = (T_ini+T_out)/2
@@ -624,7 +537,7 @@ def Rcvr_HPR_2D_Simple(CST, SF, R2, polygon_i=1,full_output=False):
         N_TOD,V_TOD,H_TOD,rO,rA,x0,y0,Arcv = [TOD[x] for x in ['N', 'V', 'H', 'rO', 'rA', 'x0', 'y0', 'A_rcv']]
         xO,yO = BDR.TOD_XY_R(rO,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)    
         lims = xO.min(), xO.max(), yO.min(), yO.max()
-        f_Qrc1,Q_rc1,X_rc1,Y_rc1 = Get_f_Qrc1(rays['xr'],rays['yr'],lims,P_SF_i)
+        f_Qrc1,Q_rc1,X_rc1,Y_rc1 = get_f_Qrc1(rays['xr'],rays['yr'],lims,P_SF_i)
         
         ###########################################################
         # Obtaining residence time
@@ -722,9 +635,8 @@ def Rcvr_HPR_2D_Simple(CST, SF, R2, polygon_i=1,full_output=False):
     else:
         return T_p, results
 
-#############################################
-#%% TILTED PARTICLE RECEIVER (TPR)
-#############################################
+
+# TILTED PARTICLE RECEIVER (TPR)
 def eta_th_tilted(Rcvr, Tp, qi, Fv=1):
     """
     Function that obtains an initial estimation for receiver thermal efficiency
@@ -766,11 +678,11 @@ def eta_th_tilted(Rcvr, Tp, qi, Fv=1):
     Tsky = T_amb - 15.
     air.TP = (Tp+T_amb)/2., ct.one_atm
     if HTC=='NellisKlein':
-        hconv = Fc*h_conv_NellisKlein(Tp, T_amb, 0.01, air)
+        hconv = Fc*htc.h_conv_NellisKlein(Tp, T_amb, 0.01, air)
     elif HTC=='Holman':
-        hconv = Fc*h_conv_Holman(Tp, T_amb, 0.01, air)
+        hconv = Fc*htc.h_conv_Holman(Tp, T_amb, 0.01, air)
     elif HTC=='Experiment':
-        hconv = Fc*h_conv_Experiment(Tp, T_amb, 0.1, air)
+        hconv = Fc*htc.h_conv_Experiment(Tp, T_amb, 0.1, air)
     
     hrad = F_t_rcv*em_p*5.67e-8*(Tp**4.-Tsky**4.)/(Tp-T_amb)
     
@@ -799,8 +711,8 @@ def eta_th_tilted(Rcvr, Tp, qi, Fv=1):
         
     return eta_th,hrad,hconv,hwall
 
-#############################################
-def View_Factor(CST,TOD,polygon_i,lims1,xp,yp,zp,beta):
+
+def get_view_factor(CST,TOD,polygon_i,lims1,xp,yp,zp,beta):
     Type, Array, x0, y0, V_TOD, N_TOD, H_TOD, rO, rA, Arcv = [TOD[x] for x in ['Type','Array','x0', 'y0','V','N','H','rO','rA','A_rcv']]
     
     xmin1,xmax1,ymin1,ymax1 = lims1
@@ -839,9 +751,9 @@ def View_Factor(CST,TOD,polygon_i,lims1,xp,yp,zp,beta):
         F12[i,j] = F12ij
         
     return X1,Y1,Z1,F12
-######################################
 
-def Getting_T_w(T_w,*args):
+
+def getting_T_w(T_w,*args):
     T_pavg,xmax,xmin,ymax,ymin,beta,F_t_ap,em_p,em_w,A_ap,h_w_amb = args
     Tamb = 300.
     Tsky = Tamb - 15.
@@ -864,7 +776,7 @@ def Getting_T_w(T_w,*args):
     # print(F_w_ap,F_t_w, A_t,A_ap,F_t_ap)
     return q_w_net
 
-####################################
+
 def HTM_2D_tilted_surface(Rcvr, f_Qrc1, f_eta, f_ViewFactor, full_output=False):
     
     x_ini, x_fin, y_bot, y_top   = [Rcvr[i] for i in ['x_ini', 'x_fin', 'y_bot', 'y_top']]
@@ -952,7 +864,7 @@ def HTM_2D_tilted_surface(Rcvr, f_Qrc1, f_eta, f_ViewFactor, full_output=False):
     else:
         return [ T_B, Qstg1, M_stg1 ]
 
-def Rcvr_TPR_0D(CST):
+def rcvr_TPR_0D(CST):
     abs_p = 0.91
     em_p  = 0.85
     em_w  = 0.20
@@ -989,7 +901,7 @@ def Rcvr_TPR_0D(CST):
     vel_p = Ltot / t_res
     return [eta_rcv, P_SF, Tp_avg, t_res, M_p, Arcv, vel_p]
 
-#######################################################
+
 def TPR_2D_model(CST,R2,SF,TOD,polygon_i=1,full_output=False):
     
     #Working only with 1 receiver
@@ -1016,13 +928,13 @@ def TPR_2D_model(CST,R2,SF,TOD,polygon_i=1,full_output=False):
     em_w  = 0.20
     hcond = 0.833
     Fc = 2.57
-    air = air=ct.Solution('air.xml')
+    air = air=ct.Solution('air.yaml')
     T_w  = 800.                        #initial guess for Tw
     beta = -27. * np.pi/180.
     
     #### OBTAINING MCRT IN TILTED SURFACE
-    R3  = R2[(R2.Npolygon==polygon_i)&R2.hit_rcv].copy()
-    R3b = R2[(R2.hit_rcv)].copy()
+    R3  = R2[(R2["Npolygon"]==polygon_i)&R2["hit_rcv"]].copy()
+    R3b = R2[(R2["hit_rcv"])].copy()
 
     #Point of pivoting belonging to the plane
     xp = R3.xr.max() + 0.1
@@ -1035,10 +947,8 @@ def TPR_2D_model(CST,R2,SF,TOD,polygon_i=1,full_output=False):
     R3['yt'] = R3.yr + kt * R3.uyr
     R3['zt'] = R3.zr + kt * R3.uzr
     
-    ##############################################
-    #### STARTING THE LOOP HERE
-    #Initial guess for number of heliostats
-    
+    # STARTING THE LOOP HERE
+    # Initial guess for number of heliostats
     air=ct.Solution('air.xml')
     T_av = (T_ini+T_out)/2
     eta_rcv = HTM_0D_blackbox( T_av, Qavg, Fc=2.57, air=air)[0]
@@ -1084,9 +994,7 @@ def TPR_2D_model(CST,R2,SF,TOD,polygon_i=1,full_output=False):
         Q_rc1 = Fbin * Q_rc1
         Q_max = Q_rc1.max()/1000.
         
-        ###########################################
         # REDUCING RECEIVER SIZE
-        
         Q_avg_min = 250       #[kW/m2] Minimal average radiation allowed per axis
         ymin_corr = Y_rc1[:-1][ Q_rc1.mean(axis=0) > Q_avg_min][0]
         ymax_corr = Y_rc1[:-1][ Q_rc1.mean(axis=0) > Q_avg_min][-1]
@@ -1135,7 +1043,7 @@ def TPR_2D_model(CST,R2,SF,TOD,polygon_i=1,full_output=False):
         ##########################################
         #### OBTAINING VIEWFACTOR_FUNCTION
         # lims = (xmin,xmax,ymin,ymax)
-        X1,Y1,Z1,F12 = View_Factor(CST,TOD,polygon_i,lims,xp,yp,zp,beta)
+        X1,Y1,Z1,F12 = get_view_factor(CST,TOD,polygon_i,lims,xp,yp,zp,beta)
         # f_ViewFactor = spi.interp2d(X1,Y1,F12)
         X2 = X1[0,:]
         Y2 = Y1[:,0]
@@ -1147,7 +1055,7 @@ def TPR_2D_model(CST,R2,SF,TOD,polygon_i=1,full_output=False):
         if it==1:
             T_pavg = (T_ini+T_out)/2.
             args = (T_pavg,xmax_corr,xmin_corr,ymax_corr,ymin_corr,beta,Fv,em_p,em_w,A_rc1,hcond)
-            T_w = spo.fsolve(Getting_T_w, T_w, args=args)[0]
+            T_w = spo.fsolve(getting_T_w, T_w, args=args)[0]
         # print(T_w)
         
         #Rcvr conditions for simulation
@@ -1157,9 +1065,7 @@ def TPR_2D_model(CST,R2,SF,TOD,polygon_i=1,full_output=False):
                 'beta':beta,'x_ini':x_ini,'x_fin':x_fin, 'y_bot':y_bot, 'y_top':y_top, 'tz':tz
                 }
         
-        ###########################################################
-        #### OBTAINING RESIDENCE TIME
-      
+        # OBTAINING RESIDENCE TIME
         #Getting initial estimates
         x_fin=lims[0]; x_ini = lims[1]; y_bot=lims[2]; y_top=lims[3]
         A_rc1  = Arcv/N_TOD
@@ -1193,7 +1099,6 @@ def TPR_2D_model(CST,R2,SF,TOD,polygon_i=1,full_output=False):
             t_res_g = rho_b * cp * tz * (T_out - T_ini ) / (eta_rcv_g * Q_av*1e6)
             t_res = t_res_g
         
-        ###################################################
         #Final values for temperature Qstg1 and Mstg1
         vel_p  = xavg/t_res                #Belt velocity magnitud
         t_sim  = (x_ini-x_fin)/vel_p           #Simulation [s]
@@ -1264,11 +1169,8 @@ def TPR_2D_model(CST,R2,SF,TOD,polygon_i=1,full_output=False):
     
     return results, T_p, Rcvr, Rcvr_full
 
-##################################################
-#%% COUPLED FUNCTIONS
-
-##################################################
-def Plant_Costs():
+# COUPLED FUNCTIONS
+def get_plant_costs():
     Ci = {}
     Ci['R_ftl']  = 1.3                   # Field to land ratio, SolarPilot
     Ci['C_land'] = 2.47                  # USD per m2 of land. SAM/SolarPilot (10000 USD/acre)
@@ -1307,7 +1209,7 @@ def Plant_Costs():
     return Ci
 
 ######################################
-def BDR_Cost(SF,CST):
+def BDR_cost(SF,CST):
     
     zf,fzv,rmin,rmax,zmax,P_SF,eta_rc,Type,Array,rO,Cg,xrc,yrc,zrc,A_h1, S_HB = [CST[x] for x in ['zf', 'fzv', 'rmin', 'rmax', 'zmax', 'P_SF', 'eta_rcv', 'Type', 'Array', 'rO_TOD', 'Cg_TOD', 'xrc', 'yrc', 'zrc', 'A_h1', 'S_HB']]
     
@@ -1522,7 +1424,7 @@ def BDR_Cost(SF,CST):
     
     return Co
 
-def Initial_eta_rcv(CSTi):
+def initial_eta_rcv(CSTi):
     Tp_avg = (CSTi['T_pC']+CSTi['T_pH'])/2
     Type  = CSTi['Type']
     Array = CSTi['Array']
@@ -1531,8 +1433,7 @@ def Initial_eta_rcv(CSTi):
     N_TOD,V_TOD = BDR.TOD_Array(Array)
     CSTi['Arcv'] = Arcv
     CSTi['rO_TOD'] = (Arcv/(V_TOD*N_TOD*np.tan(np.pi/V_TOD)))**0.5
-    # print(eta_rcv1,Arcv,CSTi['rO_TOD'])
-    eta_rcv_0D = Rcvr_TPR_0D(CSTi)[0]
+    eta_rcv_0D = rcvr_TPR_0D(CSTi)[0]
     m = 0.6895          #Correcting 0D model with linear fit
     n = 0.2466
     eta_rcv_i = eta_rcv_0D*m+n
@@ -1544,9 +1445,8 @@ def Initial_eta_rcv(CSTi):
     return eta_rcv_i, Arcv, rO_TOD
 
 ##################################
-def Simulation_Coupled(CST, **kwargs):
+def run_coupled_simulation(CST, **kwargs):
     
-    ###############################
     #Parameters for HB and TOD calculations
     zf,Type,Array,rO,Cg,xrc,yrc,zrc,Npan = [CST[x] for x in ['zf', 'Type', 'Array', 'rO_TOD', 'Cg_TOD', 'xrc', 'yrc', 'zrc', 'N_pan']]
 
@@ -1556,7 +1456,6 @@ def Simulation_Coupled(CST, **kwargs):
     else:
         file_SF = 'Datasets_Thesis/Rays_zf_{:.0f}'.format(zf)
     
-    ###############################
     #Getting the RayDataset
     R0, SF = BDR.Rays_Dataset( file_SF, read_plk=True, save_plk=True, N_pan=Npan )
     
@@ -1583,7 +1482,7 @@ def Simulation_Coupled(CST, **kwargs):
     type_rcvr = CST['type_rcvr'] if 'type_rcvr' in CST else 'None'
     
     if type_rcvr=='HPR_2D':
-        T_p, results = Rcvr_HPR_2D(CST, SF, R2)
+        T_p, results = rcvr_HPR_2D(CST, SF, R2)
         N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, M_p, t_res = results
 
     elif type_rcvr=='TPR_2D':
@@ -1591,7 +1490,7 @@ def Simulation_Coupled(CST, **kwargs):
         N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, M_p, t_res, vel_p, it, Solve_t_res = results
 
     elif type_rcvr=='HPR_0D':
-        eta_rcv, P_SF, T_p, t_res, M_p, Arcv, vx = Rcvr_HPR_0D(CST)
+        eta_rcv, P_SF, T_p, t_res, M_p, Arcv, vx = rcvr_HPR_0D(CST)
         
         Q_av = P_SF/Arcv
         T_p   = np.array([T_p])      #Only average, not used
@@ -1602,7 +1501,7 @@ def Simulation_Coupled(CST, **kwargs):
     
     elif type_rcvr=='TPR_0D':
         
-        eta_rcv_0D, P_SF, T_p, t_res, M_p, Arcv, vx = Rcvr_TPR_0D(CST)
+        eta_rcv_0D, P_SF, T_p, t_res, M_p, Arcv, vx = rcvr_TPR_0D(CST)
         
         #Correcting 0D model with linear fit
         m = 0.6895
@@ -1639,7 +1538,6 @@ def Simulation_Coupled(CST, **kwargs):
     CST['P_el']  = (Prcv / SM) * eta_pb
     CST['P_SF']  = Prcv / eta_rcv
     
-    ##################################################
     ### FINAL PARAMETERS CALCULATIONS
     fzv,A_h1,eta_pb = [CST[x] for x in ['fzv', 'A_h1', 'eta_pb']]
     
@@ -1673,9 +1571,9 @@ def Simulation_Coupled(CST, **kwargs):
     
     CST['M_HB_fin'] = M_HB_fin
     CST['M_HB_tot'] = M_HB_tot
-    ####################################
+    
     #Costing calculation
-    C = BDR_Cost(SF,CST)
+    C = BDR_cost(SF,CST)
     CST['Costs'] = C
     
     return R2, SF, CST

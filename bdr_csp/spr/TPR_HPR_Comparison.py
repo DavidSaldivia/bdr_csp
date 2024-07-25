@@ -1,40 +1,11 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sat Nov  5 21:17:13 2022
-
-@author: z5158936
-"""
 import pandas as pd
 import numpy as np
-# from scipy.optimize import fsolve, curve_fit, fmin
-import scipy.sparse as sps
-import scipy.optimize as spo
-from scipy.integrate import quad
-import scipy.interpolate as spi
-from scipy import constants as cte
-
-from scipy.sparse.linalg import LinearOperator, spilu
-
-import cantera as ct
 import matplotlib.pyplot as plt
 from matplotlib import cm
-import matplotlib.patches as patches
-import os
-from os.path import isfile
 import pickle
-import time
-import sys
 
-absFilePath = os.path.abspath(__file__)
-fileDir = os.path.dirname(os.path.abspath(__file__))
-mainDir = os.path.dirname(fileDir)
-newPath = os.path.join(mainDir, '2_Optic_Analysis')
-sys.path.append(newPath)
-import BeamDownReceiver as BDR
-
-newPath = os.path.join(mainDir, '5_HPR_Model')
-sys.path.append(newPath)
-import SolidParticleReceiver as SPR
+from bdr_csp import BeamDownReceiver as BDR
+from bdr_csp import SolidParticleReceiver as SPR
 
 zf = 50.
 

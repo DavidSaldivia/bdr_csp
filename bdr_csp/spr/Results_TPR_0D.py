@@ -1,59 +1,13 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Nov 23 19:06:14 2022
-
-@author: z5158936
-"""
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Oct 18 18:13:56 2022
-
-@author: z5158936
-"""
-import pandas as pd
-import numpy as np
-# from scipy.optimize import fsolve, curve_fit, fmin
-import scipy.sparse as sps
-import scipy.optimize as spo
-from scipy.integrate import quad
-import scipy.interpolate as spi
-from scipy import constants as cte
-
-from scipy.sparse.linalg import LinearOperator, spilu
-
 import cantera as ct
 import matplotlib.pyplot as plt
-from matplotlib import cm
-import matplotlib.patches as patches
-import os
-from os.path import isfile
-import pickle
-import time
-import sys
+import numpy as np
+import pandas as pd
 
-absFilePath = os.path.abspath(__file__)
-fileDir = os.path.dirname(os.path.abspath(__file__))
-mainDir = os.path.dirname(fileDir)
-newPath = os.path.join(mainDir, '2_Optic_Analysis')
-sys.path.append(newPath)
-import BeamDownReceiver as BDR
-
-newPath = os.path.join(mainDir, '5_SPR_Models')
-sys.path.append(newPath)
-import SolidParticleReceiver as SPR
-
-# def Get_f_eta():
-#     air  = ct.Solution('air.xml')
-#     data=[]
-#     for (Tp,qi) in [(Tp,qi) for Tp in np.arange(700.,2001,100.) for qi in np.arange(0.25,4.1,0.5)]:
-#         eta_th = SPR.HTM_0D_blackbox(Tp, qi, air=air)[0]
-#         data.append([Tp,qi,eta_th])
-#     data = np.array(data)
-#     return spi.interp2d(data[:,0],data[:,1],data[:,2])     #Function to interpolate
-# f_eta1 = Get_f_eta()
+from bdr_csp import BeamDownReceiver as BDR
+from bdr_csp import SolidParticleReceiver as SPR
 
 CSTi = BDR.CST_BaseCase()
-air  = ct.Solution('air.xml')
+air  = ct.Solution('air.yaml')
 
 Tps = np.arange(700.,2001.,100.)
 qis = [0.25,0.50,1.0,2.0,4.0,0.72]
