@@ -10,9 +10,12 @@ import cantera as ct
 import matplotlib.pyplot as plt
 import os
 from bdr_csp import SolidParticleReceiver as SPR
+from bdr_csp.dir import DIRECTORY
 
-def efficiency_plots(
-        fldr_rslt: str,
+FLDR_RSLT = os.path.join(DIRECTORY.DIR_MAIN, 'results_HPR_0D')
+
+
+def test_htm_blackbox_model(
         plot_file: str,
     ) -> None:
     
@@ -53,7 +56,7 @@ def efficiency_plots(
     ax1.tick_params(axis='both', which='major', labelsize=fs-2)
     ax1.legend(loc=1,bbox_to_anchor=(1.48, 1.01),fontsize=fs-2)
     ax1.grid()
-    fig.savefig(os.path.join(fldr_rslt,plot_file), bbox_inches='tight')
+    fig.savefig(os.path.join(FLDR_RSLT,plot_file), bbox_inches='tight')
     plt.show()
     return None
 
@@ -120,8 +123,10 @@ def radiative_fraction_plot(
     return None
 
 
+
+
 def main():
-    fldr_rslt = os.path.join(os.path.dirname(__file__), 'results_HPR_0D')
+    fldr_rslt = FLDR_RSLT
     if not os.path.isdir(fldr_rslt):
         os.mkdir(fldr_rslt)
     efficiency_plots(fldr_rslt = fldr_rslt, plot_file = 'efficiency_chart.png')
