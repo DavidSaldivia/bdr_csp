@@ -118,7 +118,6 @@ def HTM_2D_moving_particles(inputs, f_Qrc1, f_eta, full_output=False):
         Q_in = f_Qrc1.ev(B_x,B_y)/1000
         
         eta = np.array([f_eta(T_B[j],Q_in[j])[0] for j in range(len(T_B))])
-        # eta = np.array([HTM_0D_blackbox(T_B[j],Q_in[j], Fc=Fc, air=ct.Solution('air.xml'))[0] for j in range(len(T_B))])
         
         Q_in = np.where(Q_in>0.01,Q_in,0.0)
         rcv_in = np.where(Q_in>0.01,True,False)
@@ -127,8 +126,6 @@ def HTM_2D_moving_particles(inputs, f_Qrc1, f_eta, full_output=False):
         Q_gain = Q_abs * rcv_in
         if TSM=='CARBO':
             rho_b = 1810
-            # cp_b  = 365*(T_B+273.15)**0.18
-            # print(T_B)
             if np.isnan(T_B).any():
                 print(T_B)
                 sys.exit()
