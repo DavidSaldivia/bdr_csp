@@ -1,6 +1,19 @@
 import numpy as np
 import cantera as ct
 
+SIGMA_CONSTANT = 5.67e-8
+
+def temp_sky_simplest(temp_amb: float) -> float:
+    """simplest function to estimate sky temperature. It is just temp_amb-15.[K]
+
+    Args:
+        temp_amb (float): temperature in K
+
+    Returns:
+        float: sky temperature
+    """
+    return (temp_amb - 15.)
+
 def h_conv_Holman(
         T_s: float,
         T_inf: float,
@@ -60,7 +73,7 @@ def h_conv_NellisKlein(
     g = 9.81
     Ra = g * beta * abs(T_s - T_inf) * L**3 * Pr / visc**2
     C_lam  = 0.671 / ( 1+ (0.492/Pr)**(9/16) )**(4/9)
-    Nu_lam = 1.4/ np.log(1 + 1.4 / (0.835*C_lam*Ra**0.25) ) 
+    Nu_lam = float(1.4/ np.log(1 + 1.4 / (0.835*C_lam*Ra**0.25) ) )
     C_tur  = 0.14*(1 + 0.0107*Pr)/(1+0.01*Pr)
     Nu_tur = C_tur * Ra**(1/3)
     Nu = (Nu_lam**10 + Nu_tur**10)**(1/10)
