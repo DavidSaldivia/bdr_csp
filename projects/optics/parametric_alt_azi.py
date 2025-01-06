@@ -16,7 +16,7 @@ from matplotlib import cm
 import matplotlib.patches as patches
 
 from bdr_csp import BeamDownReceiver as BDR
-import AntuPy as AP
+import bdr_csp.AntuPy as AP
 
 
 ####################################

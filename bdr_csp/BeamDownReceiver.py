@@ -1589,7 +1589,7 @@ def Shadow_full(
         TMY: pd.DataFrame
     )-> pd.DataFrame:
 
-    import AntuPy as AP
+    import bdr_csp.AntuPy as AP
     import matplotlib.pyplot as plt
     from matplotlib.patches import Wedge
     from matplotlib import cm

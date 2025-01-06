@@ -15,7 +15,7 @@ from importlib import reload
 import gc
 import os
 import sys
-import BeamDownReceiver as BDR
+import bdr_csp.BeamDownReceiver as BDR
 
 absFilePath = os.path.abspath(__file__)
 fileDir   = os.path.dirname(os.path.abspath(__file__))
