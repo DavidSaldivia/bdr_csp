@@ -6,7 +6,6 @@ Created on Mon Oct 17 19:33:51 2022
 """
 import pandas as pd
 import numpy as np
-# from scipy.optimize import fsolve, curve_fit, fmin
 import scipy.sparse as sps
 import scipy.optimize as spo
 from scipy.integrate import quad
@@ -28,13 +27,13 @@ import sys
 absFilePath = os.path.abspath(__file__)
 fileDir = os.path.dirname(os.path.abspath(__file__))
 mainDir = os.path.dirname(fileDir)
-newPath = os.path.join(mainDir, '2_Optic_Analysis')
-sys.path.append(newPath)
-import BeamDownReceiver as BDR
+# newPath = os.path.join(mainDir, '2_Optic_Analysis')
+# sys.path.append(newPath)
+import bdr_csp.BeamDownReceiver as BDR
 
-newPath = os.path.join(mainDir, '5_SPR_Models')
-sys.path.append(newPath)
-import SolidParticleReceiver as SPR
+# newPath = os.path.join(mainDir, '5_SPR_Models')
+# sys.path.append(newPath)
+import bdr_csp.SolidParticleReceiver as SPR
 
 #%% OBTAIN RESULTS FROM OPTICAL SIMULATION AND GENERATE RADIATION FLUX
 #########################################################
