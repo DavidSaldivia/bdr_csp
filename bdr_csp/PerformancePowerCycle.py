@@ -31,11 +31,11 @@ fileDir = os.path.dirname(os.path.abspath(__file__))
 mainDir = os.path.dirname(fileDir)
 newPath = os.path.join(mainDir, '2_Optic_Analysis')
 sys.path.append(newPath)
-import BeamDownReceiver as BDR
+import bdr_csp.BeamDownReceiver as BDR
 
 newPath = os.path.join(mainDir, '5_SPR_Models')
 sys.path.append(newPath)
-import SolidParticleReceiver as SPR
+import bdr_csp.SolidParticleReceiver as SPR
 
 
 
@@ -54,7 +54,7 @@ def Getting_BaseCase(zf,Prcv,Qavg,fzv):
         Costs = SPR.Plant_Costs()
         CSTi['Costs_i'] = Costs
     
-        fldr_data = os.path.join(mainDir, '0_Data\MCRT_Datasets_Final')
+        fldr_data = os.path.join(mainDir, r'0_Data\MCRT_Datasets_Final')
         CSTi['file_SF'] = os.path.join(fldr_data,'Dataset_zf_{:.0f}'.format(zf))
         CSTi['file_weather'] = 'Preliminaries/Alice_Springs_Real2000_Created20130430.csv'
         CSTi['zf']    = zf

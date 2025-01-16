@@ -335,7 +335,7 @@ for var in [Results.DNI, Results.Rev, Results.Gen, Results.PbP, Results.ROI, Res
         vmin = 5.0
         vmax = 8.0
         cmap = cm.viridis
-        units = '[$kWh/m^2\;d$]'
+        units = r'[$kWh/m^2\;d$]'
         loc_lbl = 0.81
         
     if var.name =='Rev':

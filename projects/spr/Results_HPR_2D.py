@@ -24,16 +24,14 @@ import pickle
 import time
 import sys
 
+import bdr_csp.BeamDownReceiver as BDR
+import bdr_csp.SolidParticleReceiver as SPR
+
 absFilePath = os.path.abspath(__file__)
 fileDir = os.path.dirname(os.path.abspath(__file__))
 mainDir = os.path.dirname(fileDir)
-# newPath = os.path.join(mainDir, '2_Optic_Analysis')
-# sys.path.append(newPath)
-import bdr_csp.BeamDownReceiver as BDR
+dir_data = r"C:\Users\david\OneDrive\academia-pega\2024_25-serc_postdoc\bdr_csp\data"
 
-# newPath = os.path.join(mainDir, '5_SPR_Models')
-# sys.path.append(newPath)
-import bdr_csp.SolidParticleReceiver as SPR
 
 #%% OBTAIN RESULTS FROM OPTICAL SIMULATION AND GENERATE RADIATION FLUX
 #########################################################
@@ -72,7 +70,7 @@ def f_Optim1D(X,*args):
     CST['rO_TOD'] = rO
     
     #Running Optical-Thermal simulation
-    _, SF, CST = SPR.Simulation_Coupled(CST)
+    _, SF, CST = SPR.run_coupled_simulation(CST)
     
     #Objective function and penalisations
     zf, fzv, Prcv, Arcv, N_hel, eta_rcv, P_rcv_sim, Qstg, Q_av, Q_max,T_p, C  = [CST[x] for x in ['zf','fzv','P_rcv','Arcv', 'N_hel', 'eta_rcv', 'P_rcv_sim', 'Q_stg', 'Q_av', 'Q_max','T_p', 'Costs']]
@@ -87,16 +85,17 @@ def f_Optim1D(X,*args):
 #################################
 #################################
 #%% PARAMETRIC STUDY
+
 stime = time.time()
 #Parameters for CST
 CSTi = BDR.CST_BaseCase()
 
 #Plant related costs
-Costs = SPR.Plant_Costs()
+Costs = SPR.get_plant_costs()
 CSTi['Costs_i'] = Costs
 CSTi['type_rcvr'] = 'HPR_0D'
 
-fldr_data = os.path.join(mainDir, '0_Data\MCRT_Datasets_Final')
+fldr_data = os.path.join(dir_data, 'MCRT_Datasets_Final')
 fldr_rslt = 'Results_HPR_2D/'
 tol = 1e-4        #Solving the non-linear equation
 zf = 50.
@@ -110,22 +109,27 @@ tzs   = np.array([0.05])
 # Prcvs = np.array([20])
 data = []
 
-for (Qavg,Prcv,tz) in [(Qavg,Prcv,tz) for Qavg in Qavgs for Prcv in Prcvs for tz in tzs]:
-    
+def load_run_cases_optics(
+        zf: float,
+        Qavg: float,
+        Prcv: float
+    ) -> tuple[dict, pd.DataFrame, pd.DataFrame, dict]:
+
     #### CHECKING IF THE FILE EXISTED OR CREATE IT
     case = 'case_zf{:.0f}_Q_avg{:.1f}_Prcv{:.1f}'.format(zf, Qavg, Prcv)
-    # print(case)
-    file_BaseCase = 'Cases/'+case+'.plk'
+    dir_cases = r"C:\Users\david\OneDrive\academia-pega\2024_25-serc_postdoc\bdr_csp\projects\spr"
+
+    file_basecase = os.path.join(dir_cases, f'{case}.plk')
     
-    if isfile(file_BaseCase):
-    # if False:
-        [CSTo,R2,SF,TOD] = pickle.load(open(file_BaseCase,'rb'))
+    if isfile(file_basecase):
+
+        [CSTo,R2,SF,TOD] = pickle.load(open(file_basecase,'rb'))
     
     else:
         
         CSTi = BDR.CST_BaseCase()
 
-        Costs = SPR.Plant_Costs()               #Plant related costs
+        Costs = SPR.get_plant_costs()               #Plant related costs
         CSTi['Costs_i'] = Costs
         CSTi['type_rcvr'] = 'HPR_0D'
         
@@ -151,19 +155,27 @@ for (Qavg,Prcv,tz) in [(Qavg,Prcv,tz) for Qavg in Qavgs for Prcv in Prcvs for tz
         CSTi['fzv']   = fzv
         CSTi['P_rcv'] = Prcv
         
-        R2, SF, CSTo = SPR.Simulation_Coupled(CSTi)
+        R2, SF, CSTo = SPR.run_coupled_simulation(CSTi)
         zf,Type,Array,rO,Cg,xrc,yrc,zrc,Npan = [CSTo[x] for x in ['zf', 'Type', 'Array', 'rO_TOD', 'Cg_TOD', 'xrc', 'yrc', 'zrc', 'N_pan']]
         TOD = BDR.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},xrc,yrc,zrc)
         
-        pickle.dump([CSTo,R2,SF,TOD],open(file_BaseCase,'wb'))
+        pickle.dump([CSTo,R2,SF,TOD],open(file_basecase,'wb'))
+    return (CSTo,R2,SF,TOD)
 
-    ######################################################
-    #### RECEIVER FUNCTION ITSELF
+
+
+for (Qavg,Prcv,tz) in [(Qavg,Prcv,tz) for Qavg in Qavgs for Prcv in Prcvs for tz in tzs]:
+    
+    case = 'case_zf{:.0f}_Q_avg{:.1f}_Prcv{:.1f}'.format(zf, Qavg, Prcv)
+    [CSTo,R2,SF,TOD] = load_run_cases_optics(zf, Qavg, Prcv)
+    
+
+    # RECEIVER FUNCTION ITSELF
     ## Input: CST, SF, R2
     ## Output: N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, Mstg, t_res, vel_p
     
     CSTo['tz'] = tz
-    T_p, results, Rcvr_full = SPR.Rcvr_HPR_2D_Simple(CSTo, SF, R2, full_output=True)
+    T_p, results, Rcvr_full = SPR.rcvr_HPR_2D_simple(CSTo, SF, R2, full_output=True)
     N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, Eta_rcv, Mstg, t_res,vel_p, it, Solve_t_res = results
     
     Eta_SF = SF.iloc[:N_hel].mean()['Eta_SF']
@@ -174,7 +186,7 @@ for (Qavg,Prcv,tz) in [(Qavg,Prcv,tz) for Qavg in Qavgs for Prcv in Prcvs for tz
     Tp_max,Tp_min,Tp_std = T_p.max(),T_p.min(),T_p.std()
     # print(N_hel,Q_max,Q_av,eta_rcv,t_res,vel_p)
 
-    ######################################################
+
     #### GENERATING DETAILED RESULTS
     
     #Retrieven the TOD and CST information
@@ -191,7 +203,6 @@ for (Qavg,Prcv,tz) in [(Qavg,Prcv,tz) for Qavg in Qavgs for Prcv in Prcvs for tz
     row = [zf, Prcv, Qavg, tz, N_hel, Arcv, Q_max, Q_av, Qstg, t_res, vel_p, Eta_hel, Eta_BDR, Eta_SF, Eta_rcv, Eta_ThS,Mstg,T_p.mean(), it,Solve_t_res,Tp_max,Tp_min,Tp_std]
     data.append(row)
     print('\t'.join('{:.2f}'.format(x) for x in row))
-    ######################################################
     
     ############################################################
     #### Plotting
@@ -277,7 +288,7 @@ Costs = SPR.Plant_Costs()
 CSTi['Costs_i'] = Costs
 CSTi['type_rcvr'] = 'HPR_0D'
 
-fldr_data = os.path.join(mainDir, '0_Data\MCRT_Datasets_Final')
+fldr_data = os.path.join(dir_data, '0_Data','MCRT_Datasets_Final')
 fldr_rslt = 'Results_HPR_2D/'
 tol = 1e-4        #Solving the non-linear equation
 zf = 50.
@@ -349,7 +360,7 @@ print('\t'.join('{:.2f}'.format(x) for x in row))
 # plt.scatter(Xrcv, df4.Qi)
 # plt.show()
 ######################################################
-############################################################
+######################################################
 # Plotting
 for lbl in ['eta','Tp','Q_gain']:
     

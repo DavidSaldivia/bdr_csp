@@ -17,6 +17,8 @@ import sys
 from bdr_csp import BeamDownReceiver as BDR
 from bdr_csp import htc
 
+DIR_DATASETS = "C:/Users/david/OneDrive/academia-pega/2018-23_unsw_phd/0_Data/MCRT_Datasets_Final"
+
 #######################################
 #%% HEAT TRANSFER CORRELATIONS
 
@@ -270,7 +272,7 @@ def HTM_3D_moving_particles(CST,TOD,inputs,f_Qrc1,f_eta,full_output=True):
 
 def get_f_eta():
     Fc = 2.57
-    air  = ct.Solution('air.xml')
+    air  = ct.Solution('air.yaml')
     Tps = np.arange(700.,2001.,100.)
     qis = np.append(np.arange(0.10,1.01,0.1),np.arange(1.25,4.01,0.25))
     data=[]
@@ -279,6 +281,7 @@ def get_f_eta():
         data.append([Tp,qi,eta_th])
     data = np.array(data)
     return spi.interp2d(data[:,0],data[:,1],data[:,2])     #Function to interpolate
+    # return spi.RectBivariateSpline(data[:,0],data[:,1],data[:,2])     #Function to interpolate
 
 
 def get_f_Qrc1(xr,yr,lims,P_SF1):
@@ -1451,13 +1454,13 @@ def run_coupled_simulation(CST, **kwargs):
     if 'file_SF' in CST:
         file_SF = CST['file_SF']
     else:
-        file_SF = 'Datasets_Thesis/Rays_zf_{:.0f}'.format(zf)
+        file_SF = DIR_DATASETS+'/Rays_zf_{:.0f}'.format(zf)
     
     #Getting the RayDataset
     R0, SF = BDR.Rays_Dataset( file_SF, read_plk=True, save_plk=True, N_pan=Npan )
     
     #Getting interceptions with HB
-    R1 = BDR.HB_direct( R0 , CST, Refl_error=False)
+    R1 = BDR.HB_direct( R0 , CST, refl_error=False)
     R1['hel_in'] = True
     rmin = R1['rb'].quantile(0.0001)
     rmax = R1['rb'].quantile(0.9981)
@@ -1469,7 +1472,7 @@ def run_coupled_simulation(CST, **kwargs):
     
     #Interceptions with TOD
     TOD = BDR.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},xrc,yrc,zrc)
-    R2 = BDR.TOD_NR(R1,TOD,CST,Refl_error=False)
+    R2 = BDR.TOD_NR(R1,TOD,CST,refl_error=False)
     
     ### Optical Efficiencies
     SF = BDR.Optical_Efficiencies(CST,R2,SF)

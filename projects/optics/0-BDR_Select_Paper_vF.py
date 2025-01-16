@@ -20,6 +20,9 @@ import bdr_csp.BeamDownReceiver as BDR
 absFilePath = os.path.abspath(__file__)
 fileDir   = os.path.dirname(os.path.abspath(__file__))
 mainDir = os.path.dirname(fileDir)
+
+DIR_DATA = r"C:\Users\david\OneDrive\academia-pega\2024_25-serc_postdoc\bdr_csp\data"
+DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
 # sys.path.append(newPath)
 
 # sys.exit()
@@ -203,7 +206,7 @@ if op_mode == 1:
     Ah1   = 7.07*7.07
     lat   = -23.
 
-    fldr_dat    = os.path.join(mainDir, '0_Data\MCRT_Datasets_Paper')
+    fldr_dat    = os.path.join(mainDir, '0_Data', 'MCRT_Datasets_Paper')
     
     fldr_rslt = 'Results_TOD_NR_paper'
     file_rslt =  fldr_rslt+'/1-TOD_'+Type+'.txt'
@@ -227,26 +230,29 @@ if op_mode == 2:
     Npan  = 1
     Ah1   = 2.92*2.92
     lat   = -23.
-    fldr_dat  = os.path.join(mainDir, '0_Data\MCRT_Datasets_Final')
+    fldr_dat  = os.path.join(mainDir, '0_Data','MCRT_Datasets_Final')
     file_SF0  = fldr_dat+'/Dataset_zf_{:.0f}'
 
 if op_mode == 3:
-    zfs   = [100]
-    fzvs  = [0.73,]
+    zfs   = [50]
+    fzvs  = [0.83,]
     Cgs   = [2.0,]
     Arrays = ['A']
-    Types = ['PB']
-    Pels  = [2]
-    plot  = True
+    Types = ['CPC']
+    Pels  = [10]
     
     Npan  = 1
     Ah1   = 2.92**2
     lat   = -23.
     type_shdw='simple'
     
-    fldr_dat  = os.path.join(mainDir, '0_Data\MCRT_Datasets_Final')
+    fldr_dat  = os.path.join(DIR_DATA, 'mcrt_Datasets_Final')
     file_SF0  = fldr_dat+'/Dataset_zf_{:.0f}'
+    
+    fldr_rslt = os.path.join(DIR_PROJECT, "testing")
+    file_rslt =  os.path.join(fldr_rslt, 'testing.txt')
     write_f = False
+    plot  = True
     
 if op_mode == 4:
     zfs   = [75,100]
@@ -265,14 +271,17 @@ if op_mode == 4:
     Npan  = 1
     Ah1   = 2.92*2.92
     lat   = -23.
-    fldr_dat  = os.path.join(mainDir, '0_Data\MCRT_Datasets_Final')
+    fldr_dat  = os.path.join(mainDir, '0_Data','MCRT_Datasets_Final')
     file_SF0  = fldr_dat+'/Dataset_zf_{:.0f}'
 ############################################
 
 
 txt_header  = 'Pel\tzf\tfzv\tCg\tType\tArray\teta_hbi\teta_cos\teta_blk\teta_att\teta_hbi\teta_tdi\teta_tdr\teta_TOD\teta_BDR\teta_SF\tPel_real\tN_hel\tS_hel\tS_HB\tS_TOD\tH_TOD\trO\tQ_max\tstatus\n'
 file_cols = 'Pel','zf','fzv','Cg','Type','Array','eta_hbi','eta_cos','eta_blk','eta_att','eta_hbi','eta_tdi', 'eta_tdr', 'eta_TOD', 'eta_BDR', 'eta_SF', 'Pel_real', 'N_hel', 'S_hel', 'S_HB', 'S_TOD', 'H_TOD', 'rO', 'Q_max','status'
-if write_f:   f = open(file_rslt,'w'); f.write(txt_header); f.close()
+if write_f:
+    f = open(file_rslt,'w')
+    f.write(txt_header)
+    f.close()
 
 #%%  RUNNING THE LOOP ###############
 
@@ -281,7 +290,7 @@ for (zf,fzv,Cg,Array,Pel,Type) in [(zf,fzv,Cg,Array,Pel,Type) for zf in zfs for 
     # Defining the conditions for the plant
     case = 'zf_{:d}_fzv_{:.3f}_Cg_{:.1f}_{}-{}_Pel_{:.1f}'.format(zf,fzv,Cg,Type,Array,Pel)
     print(case)
-    CST = CST_BaseCase_Paper(zf=zf,fzv=fzv,P_el=Pel,N_pan=Npan,A_h1=Ah1,type_shdw=type_shdw)
+    CST = CST_BaseCase_Thesis(zf=zf,fzv=fzv,P_el=Pel,N_pan=Npan,A_h1=Ah1,type_shdw=type_shdw)
     #Files for initial data set and HB intersections dataset
     file_SF = file_SF0.format(zf)
     
@@ -317,7 +326,10 @@ for (zf,fzv,Cg,Array,Pel,Type) in [(zf,fzv,Cg,Array,Pel,Type) for zf in zfs for 
     text_r = text_r + '\t'+Type+'\t'+Array+'\t'+ '\t'.join('{:.4f}'.format(x) for x in [CST['eta_hbi'], Etas['Eta_cos'], Etas['Eta_blk'], Etas['Eta_att'], Etas['Eta_hbi'], Etas['Eta_tdi'], Etas['Eta_tdr'], Etas['Eta_TOD'], Etas['Eta_BDR'], Etas['Eta_SF']])+'\t'
     text_r = text_r + '\t'.join('{:.2f}'.format(x) for x in [ Pel_real, N_hel, S_hel, HB['S_HB'], S_TOD, H_TOD, rO, Q_rcv.max()])+'\t'+status+'\n'
     print(text_r[:-2])
-    if write_f:     f = open(file_rslt,'a');     f.write(text_r);    f.close()
+    if write_f:
+        f = open(file_rslt,'a')
+        f.write(text_r)
+        f.close()
     
 #####################################################################
 #####################################################################
@@ -410,8 +422,11 @@ for (zf,fzv,Cg,Array,Pel,Type) in [(zf,fzv,Cg,Array,Pel,Type) for zf in zfs for 
         cb = fig.colorbar(surf, shrink=0.25, aspect=4)
         cb.ax.tick_params(labelsize=f_s)
         fig.text(0.77,0.62,r'$Q_{HB}(kW/m^2)$',fontsize=f_s)
-        for tick in ax.xaxis.get_major_ticks():    tick.label.set_fontsize(f_s)
-        for tick in ax.yaxis.get_major_ticks():    tick.label.set_fontsize(f_s)
+        ax.tick_params(axis='both', which='major', labelsize=f_s)
+        # for tick in ax.xaxis.get_major_ticks():
+        #     tick.label.set_fontsize(f_s)
+        # for tick in ax.yaxis.get_major_ticks():
+        #     tick.label.set_fontsize(f_s)
         
         # from matplotlib import rc
         # rc('text', usetex=True)
@@ -567,8 +582,11 @@ for (zf,fzv,Cg,Array,Pel,Type) in [(zf,fzv,Cg,Array,Pel,Type) for zf in zfs for 
         ax1.set_xlabel('E-W axis (m)',fontsize=f_s);ax1.set_ylabel('N-S axis (m)',fontsize=f_s);
         # ax1.set_title(r'Focal point height: {:.0f}m ($\eta_{{avg}}$={:.2f})'.format(zf,Eta_cos.mean()),fontsize=f_s)
         # ax1.set_title('No eta_tdi',fontsize=f_s)
-        for tick in ax1.xaxis.get_major_ticks():    tick.label.set_fontsize(f_s)
-        for tick in ax1.yaxis.get_major_ticks():    tick.label.set_fontsize(f_s)
+        ax.tick_params(axis='both', which='major', labelsize=f_s)
+        # for tick in ax1.xaxis.get_major_ticks():
+        #     tick.label.set_fontsize(f_s)
+        # for tick in ax1.yaxis.get_major_ticks():
+        #     tick.label.set_fontsize(f_s)
         ax1.grid()
         fig.savefig(fldr_rslt+'/'+case+'_SF.png', bbox_inches='tight')
         # fig.savefig(fldr_rslt+'/'+case+'_SF.pdf', bbox_inches='tight')
@@ -848,7 +866,7 @@ Npan  = 1
 Ah1   = 2.92*2.92
 lat   = -23.
 eta_rfl = 0.95
-fldr_dat  = os.path.join(mainDir, '0_Data\MCRT_Datasets_Final')
+fldr_dat  = os.path.join(mainDir, '0_Data', 'MCRT_Datasets_Final')
 file_SF0  = fldr_dat+'/Dataset_zf_{:.0f}'
 fldr_plot = 'Results_TOD_NR_thesis'
 
