@@ -96,7 +96,7 @@ Costs = SPR.Plant_Costs()
 CSTi['Costs_i'] = Costs
 CSTi['type_rcvr'] = 'HPR_0D'
 
-fldr_data = os.path.join(mainDir, '0_Data\MCRT_Datasets_Final')
+fldr_data = os.path.join(mainDir, r'0_Data\MCRT_Datasets_Final')
 fldr_rslt = 'Results_HPR_2D/'
 tol = 1e-4        #Solving the non-linear equation
 zf = 50.
@@ -277,7 +277,7 @@ Costs = SPR.Plant_Costs()
 CSTi['Costs_i'] = Costs
 CSTi['type_rcvr'] = 'HPR_0D'
 
-fldr_data = os.path.join(mainDir, '0_Data\MCRT_Datasets_Final')
+fldr_data = os.path.join(mainDir, r'0_Data\MCRT_Datasets_Final')
 fldr_rslt = 'Results_HPR_2D/'
 tol = 1e-4        #Solving the non-linear equation
 zf = 50.
