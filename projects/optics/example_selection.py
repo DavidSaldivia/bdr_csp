@@ -112,8 +112,7 @@ def plot_hb_rad_map(
         R2: pd.DataFrame,
         Etas: pd.DataFrame,
         CST: dict,
-        HB: dict,
-        hlsts: np.array,
+        HB: HyperboloidMirror,
         fldr_rslt: str
     ) -> None:
 
@@ -129,7 +128,7 @@ def plot_hb_rad_map(
     dx = (xmax-xmin)/Nx
     dy = (ymax-ymin)/Nx
     dA = dx*dy
-    N_hel = len(hlsts)
+    N_hel = len(R2[R2["hel_in"]]["hel"].unique())
     Fbin = (
         CST['eta_rfl'] * Etas['Eta_cos'] * Etas['Eta_blk']
         * (CST['Gbn'] * CST['A_h1'] * N_hel)
@@ -190,8 +189,7 @@ def plot_receiver_rad_map(
         R2: pd.DataFrame,
         Etas: pd.DataFrame,
         CST: dict,
-        TOD: dict,
-        hlsts,
+        TOD: TertiaryOpticalDevice,
         fldr_rslt: str
     ) -> None:
     
@@ -200,7 +198,7 @@ def plot_receiver_rad_map(
     radious_ap = TOD.radious_ap
     radious_out = TOD.radious_out
 
-    N_hel = len(hlsts)
+    N_hel = len(R2[R2["hel_in"]]["hel"].unique())
     total_rad = Etas['Eta_SF'] * (CST['Gbn']*CST['A_h1']*N_hel)
     Q_TOD,X,Y = TOD.radiation_flux(R2, total_rad)
     Q_max   = Q_TOD.max()
@@ -275,9 +273,17 @@ def plot_solar_field_etas(
 
     return None
 
-################################################
-################ MAIN PROGRAM ##################
-################################################
+#Getting the receiver area and the characteristics for CPC
+def get_radious_out(*args):
+    def A_rqrd(rO,*args):
+        A_rcv_rq, geometry, array, xrc, yrc, zrc, Cg = args
+        A_rcv = TertiaryOpticalDevice(
+            params={"geometry":geometry, "array":array, "Cg":Cg, "rO":rO},
+            xrc=xrc, yrc=yrc, zrc=zrc,
+        ).receiver_area
+        return A_rcv - A_rcv_rq
+    return fsolve(A_rqrd, 1.0, args=args)[0]
+
 
 # SETTING CONDITIONS
 # op_mode = 3
@@ -345,14 +351,37 @@ def plot_solar_field_etas(
 #     file_SF0  = fldr_dat+'/Dataset_zf_{:.0f}'
 ############################################
 
+from dataclasses import dataclass
+
+@dataclass
+class CSPPlant():
+    design_rad   = 950                # Design-point DNI [W/m2]
+    design_day   = 80                 # Design-point day [-]
+    design_omega = 0.0                # Design-point hour angle [rad]
+    lat   = -23.                      # Latitude [°]
+    lng   = 115.9                     # Longitude [°]
+    temp_amb = 300.                   # Ambient Temperature [K]
+    type_shadow = "simple"
+
+    # Receiver and Power Block
+    power_el = 10.0               #[MW] Target for Net Electrical Power
+    eta_pb  = 0.50               #[-] Power Block efficiency target 
+    eta_stg  = 0.95               #[-] Storage efficiency target
+    eta_rcv = 0.75               #[-] Receiver efficiency target
+
+    @property
+    def power_th(self) -> float:
+        power_th = self.power_el / (self.eta_pb * self.eta_stg)
+        return power_th
+
 
 def run_parametric(
         zfs: list,
         fzvs: list,
         Cgs: list,
-        Arrays: list,
+        arrays: list,
         Pels: list,
-        Types: list,
+        geometries: list,
         write_f: bool = False,
         plot: bool = True,
 ):
@@ -363,49 +392,40 @@ def run_parametric(
     type_shdw = 'point'
     
     fldr_dat  = os.path.join(DIR_DATA, 'mcrt_datasets_final')
-    file_SF0  = fldr_dat+'/Dataset_zf_{:.0f}'
+    file_SF0  = os.path.join(fldr_dat,'Dataset_zf_{:.0f}')
     
     fldr_rslt = os.path.join(DIR_PROJECT, "testing")
     file_rslt =  os.path.join(fldr_rslt, 'testing.txt')
 
-    txt_header  = 'Pel\tzf\tfzv\tCg\tType\tArray\teta_cos\teta_blk\teta_att\teta_hbi\teta_tdi\teta_tdr\teta_TOD\teta_BDR\teta_SF\tPel_real\tN_hel\tS_hel\tS_HB\tS_TOD\tH_TOD\trO\tQ_max\tstatus\n'
-    file_cols = 'Pel','zf','fzv','Cg','Type','Array','eta_cos','eta_blk','eta_att','eta_hbi','eta_tdi', 'eta_tdr', 'eta_TOD', 'eta_BDR', 'eta_SF', 'Pel_real', 'N_hel', 'S_hel', 'S_HB', 'S_TOD', 'H_TOD', 'rO', 'Q_max','status'
+    txt_header  = 'Pel\tzf\tfzv\tCg\tgeometry\tarray\teta_cos\teta_blk\teta_att\teta_hbi\teta_tdi\teta_tdr\teta_TOD\teta_BDR\teta_SF\tPel_real\tN_hel\tS_hel\tS_HB\tS_TOD\tH_TOD\trO\tQ_max\tstatus\n'
+    file_cols = 'Pel','zf','fzv','Cg','geometry','array','eta_cos','eta_blk','eta_att','eta_hbi','eta_tdi', 'eta_tdr', 'eta_TOD', 'eta_BDR', 'eta_SF', 'Pel_real', 'N_hel', 'S_hel', 'S_HB', 'S_TOD', 'H_TOD', 'rO', 'Q_max','status'
     if write_f:
         f = open(file_rslt,'w')
         f.write(txt_header)
         f.close()
 
-    for (zf,fzv,Cg,Array,Pel,Type) in [
-        (zf,fzv,Cg,Array,Pel,Type) 
+    for (zf,fzv,Cg,array,Pel,geometry) in [
+        (zf,fzv,Cg,array,Pel,geometry) 
         for zf in zfs 
         for fzv in fzvs 
         for Cg in Cgs 
-        for Array in Arrays 
+        for array in arrays 
         for Pel in Pels 
-        for Type in Types
+        for geometry in geometries
     ]:
         
         # Defining the conditions for the plant
-        case = 'zf_{:d}_fzv_{:.3f}_Cg_{:.1f}_{}-{}_Pel_{:.1f}'.format(zf,fzv,Cg,Type,Array,Pel)
+        case = f'zf_{zf:d}_fzv_{fzv:.3f}_Cg_{Cg:.1f}_{geometry}-{array}_Pel_{Pel:.1f}'
         print(case)
-        CST = CST_BaseCase_Thesis(zf=zf,fzv=fzv,P_el=Pel,N_pan=Npan,A_h1=Ah1,type_shdw=type_shdw)
+        CST = CST_BaseCase_Thesis(
+            zf=zf, fzv=fzv, P_el=Pel, N_pan=Npan, A_h1=Ah1, type_shdw=type_shdw
+        )
         #Files for initial data set and HB intersections dataset
         file_SF = file_SF0.format(zf)
         
-        #Getting the receiver area and the characteristics for CPC
-        def get_radious_out(*args):
-            def A_rqrd(rO,*args):
-                A_rcv_rq, Type, Array, xrc, yrc, zrc, Cg = args
-                A_rcv = TertiaryOpticalDevice(
-                    params={"geometry":Type, "array":Array, "Cg":Cg, "rO":rO},
-                    xrc=xrc, yrc=yrc, zrc=zrc,
-                ).receiver_area
-                return A_rcv - A_rcv_rq
-            return fsolve(A_rqrd, 1.0, args=args)[0]
-        
         xrc, yrc, zrc = CST["xrc"], CST["yrc"], CST["zrc"]
         A_rcv_rq = CST['P_SF'] / CST['Q_av']      #Area receiver
-        rO = get_radious_out(A_rcv_rq,Type,Array,xrc,yrc,zrc,Cg)
+        rO = get_radious_out(A_rcv_rq, geometry, array, xrc, yrc, zrc, Cg)
         eta_hbi = CST["eta_hbi"]
 
         HSF = SolarField(zf=zf, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
@@ -413,23 +433,37 @@ def run_parametric(
             zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=eta_hbi
         )
         TOD = TertiaryOpticalDevice(
-            params={"geometry":Type, "array":Array, "Cg":Cg, "rO":rO},
+            params={"geometry":geometry, "array":array, "Cg":Cg, "rO":rO},
             xrc=xrc, yrc=yrc, zrc=zrc,
         )
 
         ### Calling the heliostat selection function
-        R2, Etas, SF, TOD, HB, hlst, Q_rcv, status = BDR.heliostat_selection(CST,HSF,HB,TOD)
+        R2, Etas, SF, status = BDR.heliostat_selection(CST,HSF,HB,TOD)
         
         #Some postcalculations
-        N_hel = len(hlst)
+        N_hel = len(R2["hel"].unique())
         S_hel = N_hel * HSF.A_h1
         Pth_real = SF[SF['hel_in']]['Q_h1'].sum()
         Pel_real = Pth_real * (CST['eta_pb']*CST['eta_sg']*CST['eta_rcv'])
+        Q_max = TOD.radiation_flux(R2, Pth_real*1e6)[0].max()
         
         #Printing the result on file
-        text_r = '\t'.join('{:.3f}'.format(x) for x in [Pel,zf, fzv, Cg])
-        text_r = text_r + '\t'+Type+'\t'+Array+'\t'+ '\t'.join('{:.4f}'.format(x) for x in [Etas['Eta_cos'], Etas['Eta_blk'], Etas['Eta_att'], Etas['Eta_hbi'], Etas['Eta_tdi'], Etas['Eta_tdr'], Etas['Eta_TOD'], Etas['Eta_BDR'], Etas['Eta_SF']])+'\t'
-        text_r = text_r + '\t'.join('{:.2f}'.format(x) for x in [ Pel_real, N_hel, S_hel, HB.area, TOD.surface_area, TOD.height, TOD.radious_out, Q_rcv.max()])+'\t'+status+'\n'
+
+        text_r = (
+            '\t'.join('{:.3f}'.format(x) for x in [Pel,zf, fzv, Cg])
+            + '\t'+geometry+'\t'+array+'\t'
+            + '\t'.join('{:.4f}'.format(Etas[x]) for x in [
+                'Eta_cos', 'Eta_blk', 'Eta_att', 
+                'Eta_hbi', 'Eta_tdi', 'Eta_tdr', 
+                'Eta_TOD', 'Eta_BDR', 'Eta_SF'
+            ] )+'\t'
+            + '\t'.join('{:.2f}'.format(x) for x in [
+                Pel_real, N_hel, S_hel, HB.area,
+                TOD.surface_area, TOD.height, TOD.radious_out,
+                Q_max
+            ])+'\t'+status+'\n'
+        )
+        
         print(text_r[:-2])
         if write_f:
             f = open(file_rslt,'a')
@@ -438,9 +472,10 @@ def run_parametric(
 
         # SPECIFIC CONDITIONS PLOTING
         if plot:
-            plot_hb_rad_map(case, R2,Etas,CST, HB, hlst, fldr_rslt)
 
-            plot_receiver_rad_map(case, R2, Etas, CST, TOD, hlst, fldr_rslt)
+            plot_hb_rad_map(case, R2, Etas, CST, HB, fldr_rslt)
+
+            plot_receiver_rad_map(case, R2, Etas, CST, TOD, fldr_rslt)
 
             plot_solar_field_etas(case, R2, SF, Etas, N_hel, fldr_rslt)
 
@@ -452,8 +487,8 @@ def main():
         zfs   = [50],
         fzvs  = [0.83,],
         Cgs   = [2.0,],
-        Arrays = ['A'],
-        Types = ['PB'],
+        arrays = ['A'],
+        geometries = ['CPC'],
         Pels  = [10],
         write_f = False,
         plot = True

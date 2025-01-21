@@ -1446,6 +1446,7 @@ def run_coupled_simulation(CST, **kwargs):
     
     #Parameters for HB and TOD calculations
     zf,Type,Array,rO,Cg,xrc,yrc,zrc,Npan = [CST[x] for x in ['zf', 'Type', 'Array', 'rO_TOD', 'Cg_TOD', 'xrc', 'yrc', 'zrc', 'N_pan']]
+    TOD = BDR.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},xrc,yrc,zrc)
 
     #Getting the RayDataset
     if 'file_SF' in CST:
@@ -1462,17 +1463,17 @@ def run_coupled_simulation(CST, **kwargs):
     rmin = R1['rb'].quantile(0.0001)
     rmax = R1['rb'].quantile(0.9981)
     R1['hit_hb'] = (R1['rb']>rmin)&(R1['rb']<rmax)
-    CST['rmin'] = rmin; CST['rmax'] = rmax
+    CST['rmin'] = rmin
+    CST['rmax'] = rmax
     
     #Shadowing
     SF = BDR.Shadow_simple(CST,SF)
     
     #Interceptions with TOD
-    TOD = BDR.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},xrc,yrc,zrc)
     R2 = BDR.TOD_NR(R1,TOD,CST,Refl_error=False)
     
     ### Optical Efficiencies
-    SF = BDR.Optical_Efficiencies(CST,R2,SF)
+    SF = BDR.optical_efficiencies(CST,R2,SF)
     
     #############################################
     ### SELECTING RECEIVER AND CALCULATING RECEIVER EFFICIENCY 

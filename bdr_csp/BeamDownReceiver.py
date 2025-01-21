@@ -437,28 +437,6 @@ class TertiaryOpticalDevice():
         yrc: float,
         zrc: float
         )-> dict[str, float]:
-        """
-        Function that calculates the main geometric parameters for TOD array.
-
-        Parameters
-        ----------
-        Type            : Type of TOD concentrator (Could be 'CPC', 'PB', or None)
-        Array           : Type of TOD array (see TOD_Dsgn function)
-        xrc, yrc, zrc   : Position of aperture plane (second focal point)
-        TOD             : Must be at least two of these combinations on a dict: rA, rO, H, Cg
-
-        Returns TOD (dict) with the following keys
-        -------
-        rA    : Aperture radius
-        rO    : receiver (output) radius
-        H     : TOD height
-        Cg    : Concentration Ratio
-        S_TOD : Surface of TOD Array [m2].
-        A_TOD : Aperture TOD Array Area [m2].
-        A_rcv : Outlet TOD Array Area (equal to receiver area) [m2].
-        rBDR  : Radius of TOD Array [m]
-        theta : TOD concentration angle.
-        """
 
         #Depending the parameters received, the others are calculated
         TOD_type  = params['geometry']
@@ -543,10 +521,7 @@ class TertiaryOpticalDevice():
             H = zmax
             tht   = tht_mx
             theta = np.degrees(tht)
-            
-            N, V = TOD_Array(array)
             phi   = np.radians(360./V)
-            x0,y0 = self.array_centers()
             
             zo = 0.
             dz = (zmax-zo)/Ndz
@@ -1109,51 +1084,14 @@ def heliostat_selection(
         HB: HyperboloidMirror,
         TOD: TertiaryOpticalDevice,
         verbose: bool = True
-    ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, dict, dict, list, pd.DataFrame, str]:
-    """
-    Description
-    The function receive CST parameters, TOD characteristics, and a file name for rays datasets
-    Returns the rays final positions in receiver surface,
-    the efficiencies per heliostat, the average efficiencies of the system,
-    the list of selected heliostats, the HB and TOD characteristics,
-    the receiver radiation map, and the convergence status.
-    
-    Parameters
-    ----------
-    CST : Dict.
-        Characteristics of CST plant.
-    TOD : Dict.
-        Design of TOD array.
-    file_SF : string.
-        Name of file with SolarPilot's dataset
+    ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.DataFrame, str]:
 
-    Returns
-    -------
-    R2    : pandas DataFrame with final rays positions.
-    Etas  : pandas Series with Average efficiencies.
-    SF    : pandas DataFrame with Detailed efficiencies per heliostat.
-    TOD   : dict with TOD characteristics
-    HB    : dict with HB characteristics.
-    hlst  : list with selected heliostats.
-    Q_rcv : pandas DataFrame with receiver radiation map.
-    stats : string, 'OK' if the solution converged, otherwise an error label.
-    """
-    
-    # eta_hbi, A_h1, N_pan = [ CST[x] for x in ['xrc','yrc','zrc','zf','fzv','eta_hbi', 'A_h1', 'N_pan'] ]
-    # geometry,Array,rA,rO = [ TOD_[x] for x in ['Type', 'Array', 'rA', 'rO'] ]
-    
-    # HSF = SolarField(zf=zf, A_h1=A_h1, N_pan=N_pan)
-    # HB = HyperboloidMirror(zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=eta_hbi)
-    # TOD = TertiaryOpticalDevice(
-    #     params={"geometry":geometry, "array":Array, "rA":rA, "rO":rO},
-    #     xrc=xrc, yrc=yrc, zrc=zrc,
-    # )
+    type_shdw = CST['type_shdw'] if 'type_shdw' in CST else 'None'
 
     # loading dataset
     R0, SF = HSF.load_dataset(save_plk=True)
     SF = HSF.helios
-    hlst    = R0['hel'].unique()
-    N_max   = len(hlst)
+    N_max   = len(R0['hel'].unique())
     if verbose:
         print("Rays dataset loaded")
 
@@ -1183,8 +1121,8 @@ def heliostat_selection(
     #Calculating the efficiencies that depend on HB
     R1['hel_in'] = True                 #Considering all heliostat at beginning
     R1['hit_hb'] = True                 #Considering all rays hitting the HB
-    hlst         = R1['hel'].unique()   #Considering all heliostat at beginning
     
+    suav    = 0.7
     Nit = 1
     N_ant = N_max
     N_an2 = 0
@@ -1192,14 +1130,18 @@ def heliostat_selection(
 
         HB.get_surface_area(R1)
 
-        R1['hit_hb'] = (R1['rb']>HB.rmin)&(R1['rb']<HB.rmax)
+        R1['hit_hb'] = ( (R1['rb']>HB.rmin) & (R1['rb']<HB.rmax) )
 
         # Altitude equals 90° - lat. Azimuth equals 0.
-        type_shdw = CST['type_shdw'] if 'type_shdw' in CST else 'None'
         if type_shdw == 'None' or type_shdw == 'point':
             SF = HB.shadow_point(90. - CST['lat'], 0., SF)
         else:
-            SF = HB.shadow_simple(lat=CST['lat'], lng=CST["lng"],type_shdw=type_shdw, SF=SF)
+            SF = HB.shadow_simple(
+                lat=CST['lat'],
+                lng=CST["lng"],
+                type_shdw=type_shdw,
+                SF=SF
+            )
         
         #Getting the values for efficiencies and radiation fluxes
         SF['Eta_hbi'] = (R1.groupby('hel').sum()['hit_hb'] / R1.groupby('hel').count()['xb'])
@@ -1214,7 +1156,6 @@ def heliostat_selection(
         
         #Getting the number of heliostats required and the list of heliostats
         N_hel0  = len( Q_acc[ Q_acc < CST['P_SF'] ] ) + 1
-        suav    = 0.7
         N_hel   = int(np.ceil( suav*N_ant + (1-suav)* N_hel0 ))    #Attenuation factor
         if N_an2==N_hel:
             N_hel = int((N_hel+N_ant)/2)    #In case we are in a loop
@@ -1228,7 +1169,11 @@ def heliostat_selection(
 
         # Writing the results for partial iteration
         if verbose:
-            text_r = '\t'.join('{:.4f}'.format(x) for x in [Nit, HB.eta_hbi, N_hel, HB.area, Etas['Eta_hbi'], Etas['Eta_cos'], Etas['Eta_tdi'], Etas['Eta_tdr'], Etas['Eta_TOD'], Etas['Eta_BDR'], Etas['Eta_SF'],HB.rmin,HB.rmax])+'\n'
+            text_r = '\t'.join('{:.4f}'.format(x) for x in [
+                Nit, HB.eta_hbi, N_hel, HB.area,
+                Etas['Eta_hbi'], Etas['Eta_cos'], Etas['Eta_tdi'], Etas['Eta_tdr'],
+                Etas['Eta_TOD'], Etas['Eta_BDR'], Etas['Eta_SF'], HB.rmin, HB.rmax
+            ])+'\n'
             print(text_r[:-2])
         
         #Checking if even with max heliostat we do not have enough power
@@ -1248,14 +1193,11 @@ def heliostat_selection(
             status = 'NC'
             break
         else:
-            Nit+=1
+            Nit += 1
     
     R2['hel_in'] = R2['hel'].isin(hlst)
-
-    total_rad = Etas['Eta_SF'] * (CST['Gbn']*CST['A_h1']*N_hel)
-    Q_rcv, X, Y = TOD.radiation_flux(R2, total_rad)
     
-    return R2, Etas, SF, TOD, HB, hlst, Q_rcv, status
+    return R2, Etas, SF, status
 
 
 #  GENERAL FUNCTIONS ##############################
@@ -2422,7 +2364,7 @@ def TOD_NR(
     return R2
 
 
-def Optical_Efficiencies(
+def optical_efficiencies(
         CST: dict,
         R2: pd.DataFrame,
         SF: pd.DataFrame
@@ -2453,10 +2395,9 @@ def Optical_Efficiencies(
     SF['Eta_hbi'] = SF2['hit_hb']/SF2['hel_in']
 
     SF['Eta_tdi'] = SF2['hit_tod']/SF2['hit_hb']
-    SF['Eta_tdr'] = SF2['hit_rcv']/SF2['hit_tod']
 
     Nr_tod = R2[R2['hit_rcv']].groupby('hel')['Nr_tod'].mean()
-    SF['Eta_tdr'] = SF['Eta_tdr'] * eta_rfl**Nr_tod
+    SF['Eta_tdr'] = (SF2['hit_rcv']/SF2['hit_tod']) * eta_rfl**Nr_tod
     
     SF['Eta_hel'] = SF['Eta_cos'] * SF['Eta_blk'] * SF['Eta_att'] * eta_rfl
     SF['Eta_BDR'] = (eta_rfl * SF['Eta_hbi']) * (SF['Eta_tdi'] * SF['Eta_tdr'])
