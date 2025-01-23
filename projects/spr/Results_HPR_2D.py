@@ -82,9 +82,14 @@ def parametric_study(
     stime = time.time()
     fldr_rslt = os.path.join(DIR_PROJECT, 'results_testing')
     tol = 1e-3
+
     zf = 50.
     Qavg = 1.0
     Prcv = 20.
+    xrc, yrc, zrc = (0.,0.,0.)
+    geometry = "PB"
+    array = "A"
+    Cg = 2.0
 
     # Qavgs = np.array([1.00,0.75,0.50,1.25,1.50])
     # Prcvs = np.append(np.arange(20,41,5),np.arange(15,4,-5))
@@ -95,7 +100,7 @@ def parametric_study(
 
     for (Qavg,Prcv,tz) in [(Qavg,Prcv,tz) for Qavg in Qavgs for Prcv in Prcvs for tz in tzs]:
         
-        #### CHECKING IF THE FILE EXISTED OR CREATE IT
+        # checking if the file existed
         case = 'case_zf{:.0f}_Q_avg{:.2f}_Prcv{:.1f}'.format(zf, Qavg, Prcv)
         # print(case)
         file_base_case = 'cases/'+case+'.plk'
@@ -107,10 +112,8 @@ def parametric_study(
         else:
             
             CSTi = BDR.CST_BaseCase()
-
             CSTi['costs_in'] = SPR.get_plant_costs()         #Plant related costs
             CSTi['type_rcvr'] = 'HPR_0D'
-            
             CSTi['file_SF'] = os.path.join(
                 DIR_DATA,
                 'mcrt_datasets_final',
@@ -128,7 +131,6 @@ def parametric_study(
             CSTi['eta_rcv'] = SPR.HTM_0D_blackbox( Tp_avg, CSTi['Qavg'] )[0]
             Arcv = (CSTi['P_rcv']/CSTi['eta_rcv']) / CSTi['Qavg']
             CSTi['Arcv'] = Arcv
-            geometry, array, Cg, xrc, yrc, zrc  = [CSTi[x] for x in ["Type", "Array", "Cg_TOD", "xrc", "yrc", "zrc"]]
 
             TOD = TertiaryOpticalDevice(
                 params={"geometry":geometry, "array":array, "Cg":Cg, "Arcv":Arcv},
@@ -175,9 +177,6 @@ def parametric_study(
         eta_BDR = SF.iloc[:n_hels].mean()['Eta_BDR']
         eta_ThS = eta_SF * eta_rcv
 
-        polygon_i=1
-        xO,yO = TOD.perimeter_points(TOD.radious_out, tod_index=polygon_i-1)
-        lims = xO.min(), xO.max(), yO.min(), yO.max()
         
         cols = ['zf', 'Prcv', 'Qavg', 'tz',
                 'n_hels', 'Arcv', 'rad_flux_max', 'rad_flux_avg',
@@ -194,72 +193,8 @@ def parametric_study(
                temps_parts.max(), temps_parts.min(), temps_parts.std(),]
         data.append(row)
         print('\t'.join('{:.2f}'.format(x) for x in row))
-        ######################################################
-        
-        ############################################################
-        #### Plotting
-        for lbl in ['eta','Tp','Q_in']:
-            
-            fig = plt.figure(figsize=(14, 8))
-            ax = fig.add_subplot(111, aspect='equal')
-            X = results["full"]['x']
-            Y = results["full"]['y']
-            Z = results["full"][lbl]
-            f_s = 16
-            if lbl == 'eta':
-                vmin = 0.7
-                vmax = 0.9
-                cmap = cm.YlOrRd
-            elif lbl =='Tp':
-                vmin = (np.floor(Z.min()/100)*100)
-                vmax = (np.ceil(Z.max()/100)*100)
-                cmap = cm.YlOrRd
-            elif lbl =='Q_in':
-                vmin = 0.0
-                vmax = np.ceil(Z.max())
-                cmap = cm.YlOrRd
-            
-            surf = ax.pcolormesh(X, Y, Z, cmap=cmap, vmin=vmin, vmax=vmax)
-            ax.set_xlabel('E-W axis (m)',fontsize=f_s)
-            ax.set_ylabel('N-S axis (m)',fontsize=f_s);
-            cb = fig.colorbar(surf, shrink=0.5, aspect=4)
-            cb.ax.tick_params(labelsize=f_s-2)
-            
-            # xO,yO = TOD.perimeter_points(TOD.radious_out, tod_index=polygon_i-1)
-            # xA,yA = TOD.perimeter_points(TOD.radious_ap, tod_index=polygon_i-1)
-            # lp = len(xA)//2
-            # fyO = spi.CubicSpline(xO[:lp],yO[:lp],extrapolate=True)
-            # yO2 = np.interp(xA[:lp],xO[:lp],yO[:lp])
-            # yO2 = fyO(xA[:lp])
-            # ax.fill_between(xA[:lp],yO2[:lp],2*yA[:lp], color='w')
-            # ax.fill_between(xA[:lp],-yO2[:lp],-2*yA[:lp], color='w')
-            
-            x0f = TOD.x0[polygon_i-1]
-            y0f = TOD.y0[polygon_i-1]
-            radius = TOD.radious_out/np.cos(np.pi/TOD.n_sides)
-            ax.add_artist(patches.RegularPolygon(
-                (x0f,y0f),
-                TOD.n_sides,
-                radius=radius,
-                orientation=np.pi/TOD.n_sides,
-                zorder=10, color='black', fill=None
-            ))
-            radius = TOD.radious_ap/np.cos(np.pi/TOD.n_sides)
-            ax.add_artist(patches.RegularPolygon(
-                (x0f,y0f),
-                TOD.n_sides,
-                radius = radius,
-                orientation = np.pi/TOD.n_sides,
-                zorder=10, color='black', fill=None
-            ))
-            
-            ax.set_xlim(lims[0],lims[1])
-            ax.set_ylim(lims[2],lims[3])
-            fig.savefig(
-                os.path.join(fldr_rslt, f'{case}_{lbl}.png'), bbox_inches='tight'
-            )
-            plt.close()
 
+        plotting_detailed_results(case, results, TOD)
         # print(time.time()-stime)
 
     df_res = pd.DataFrame(data,columns=cols)
@@ -267,6 +202,82 @@ def parametric_study(
 
     df_res.to_csv(os.path.join(fldr_rslt,'0_Results_zf_{:.0f}.csv').format(zf))
     return df_res
+
+def plotting_detailed_results(
+        case: str,
+        results_rcv: dict,
+        TOD: TertiaryOpticalDevice,
+        polygon_i: int = 1,
+        labels: list[str] = ['eta','Tp','Q_in'],
+    ) -> None:
+
+    fldr_rslt = os.path.join(DIR_PROJECT, 'results_testing')
+
+    for label in labels:
+        
+        fig = plt.figure(figsize=(14, 8))
+        ax = fig.add_subplot(111, aspect='equal')
+        X = results_rcv["full"]['x']
+        Y = results_rcv["full"]['y']
+        Z = results_rcv["full"][label]
+        f_s = 16
+        if label == 'eta':
+            vmin = 0.7
+            vmax = 0.9
+            cmap = cm.YlOrRd
+        elif label =='Tp':
+            vmin = (np.floor(Z.min()/100)*100)
+            vmax = (np.ceil(Z.max()/100)*100)
+            cmap = cm.YlOrRd
+        elif label =='Q_in':
+            vmin = 0.0
+            vmax = np.ceil(Z.max())
+            cmap = cm.YlOrRd
+        
+        surf = ax.pcolormesh(X, Y, Z, cmap=cmap, vmin=vmin, vmax=vmax)
+        ax.set_xlabel('E-W axis (m)',fontsize=f_s)
+        ax.set_ylabel('N-S axis (m)',fontsize=f_s);
+        cb = fig.colorbar(surf, shrink=0.5, aspect=4)
+        cb.ax.tick_params(labelsize=f_s-2)
+        
+        polygon_i=1
+        xO,yO = TOD.perimeter_points(TOD.radious_out, tod_index=polygon_i-1)
+        lims = xO.min(), xO.max(), yO.min(), yO.max()
+
+        # xA,yA = TOD.perimeter_points(TOD.radious_ap, tod_index=polygon_i-1)
+        # lp = len(xA)//2
+        # fyO = spi.CubicSpline(xO[:lp],yO[:lp],extrapolate=True)
+        # yO2 = np.interp(xA[:lp],xO[:lp],yO[:lp])
+        # yO2 = fyO(xA[:lp])
+        # ax.fill_between(xA[:lp],yO2[:lp],2*yA[:lp], color='w')
+        # ax.fill_between(xA[:lp],-yO2[:lp],-2*yA[:lp], color='w')
+        
+        x0f = TOD.x0[polygon_i-1]
+        y0f = TOD.y0[polygon_i-1]
+        radius = TOD.radious_out/np.cos(np.pi/TOD.n_sides)
+        ax.add_artist(patches.RegularPolygon(
+            (x0f,y0f),
+            TOD.n_sides,
+            radius=radius,
+            orientation=np.pi/TOD.n_sides,
+            zorder=10, color='black', fill=None
+        ))
+        radius = TOD.radious_ap/np.cos(np.pi/TOD.n_sides)
+        ax.add_artist(patches.RegularPolygon(
+            (x0f,y0f),
+            TOD.n_sides,
+            radius = radius,
+            orientation = np.pi/TOD.n_sides,
+            zorder=10, color='black', fill=None
+        ))
+        
+        ax.set_xlim(lims[0],lims[1])
+        ax.set_ylim(lims[2],lims[3])
+        fig.savefig(
+            os.path.join(fldr_rslt, f'{case}_{label}.png'), bbox_inches='tight'
+        )
+        plt.close()
+    return None
 
 def plotting_results(df_res):
     fs=16

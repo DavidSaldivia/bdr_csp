@@ -276,7 +276,7 @@ def HTM_3D_moving_particles(CST,TOD,inputs,f_Qrc1,f_eta,full_output=True):
     return T_p, Qstg1, M_stg1, Py_3D
 
 
-def get_f_eta():
+def get_func_eta():
     Fc = 2.57
     air  = ct.Solution('air.yaml')
     Tps = np.arange(700.,2001.,100.)
@@ -292,7 +292,7 @@ def get_f_eta():
         )
 
 
-def get_f_Qrc1(xr,yr,lims,P_SF1):
+def get_func_Qrc1(xr,yr,lims,P_SF1):
     
     xmin,xmax,ymin,ymax = lims
     
@@ -509,15 +509,14 @@ def rcvr_HPR_2D_simple(
         R2: pd.DataFrame,
         polygon_i: int = 1,
         full_output: bool = False
-    ):
+    ) -> dict:
     
-    def F_Toutavg(t_res_g,*args):
-        x_ini,x_fin,y_bot,y_top,P_vel,t_sim,tz,T_ini,TSM,f_Qrc1,f_eta = args
-        vel_p  = xavg/t_res_g[0]                #Belt velocity magnitud
+    def func_temp_out_avg(t_res_g,*args):
+        x_ini,x_fin,y_bot,y_top,P_vel,t_sim,tz,T_ini,TSM,func_Qrc1,func_eta = args
+        vel_p  = x_avg/t_res_g[0]                #Belt velocity magnitud
         t_sim  = (x_ini-x_fin)/vel_p         #Simulate all the receiver
         inputs = [x_ini,x_fin,y_bot,y_top,vel_p,t_sim,tz,T_ini,TSM]
-        # print(t_sim,vel_p)
-        T_p, Qstg1, M_stg1 = HTM_2D_moving_particles(inputs,f_Qrc1,f_eta)
+        T_p, Qstg1, M_stg1 = HTM_2D_moving_particles(inputs,func_Qrc1,func_eta)
         return T_p.mean()-T_out
     
     T_ini, T_out, tz, TSM, Prcv, Qavg = [CST[x] for x in ['T_pC', 'T_pH', 'tz', 'TSM', 'P_rcv', 'Qavg']]
@@ -525,19 +524,14 @@ def rcvr_HPR_2D_simple(
     if CST['TSM'] == 'CARBO':
         rho_b = 1810
 
-    #Particles characteristics
-    f_eta = get_f_eta()
-    
     #Initial guess for number of heliostats
-    T_av = (T_ini+T_out)/2
-    eta_rcv = f_eta([T_av, Qavg])[0]
-    P_SF  = Prcv / eta_rcv
-    
+    func_eta = get_func_eta()
+    eta_rcv = func_eta([(T_ini+T_out)/2, Qavg])[0]
     Q_acc = SF['Q_h1'].cumsum()
-    N_hel = len( Q_acc[ Q_acc < P_SF ] ) + 1
+    N_hel = len( Q_acc[ Q_acc < (Prcv / eta_rcv) ] ) + 1
         
     R2a = R2[(R2["hit_rcv"])&(R2["Npolygon"]==polygon_i)].copy()  #Rays into 1 receiver
-    R2b = R2[(R2["hit_rcv"])].copy()                           #Total Rays into receivers
+    R2_all = R2[(R2["hit_rcv"])].copy()                           #Total Rays into receivers
     
     it_max = 20
     it = 1
@@ -554,16 +548,14 @@ def rcvr_HPR_2D_simple(
         eta_SF_it = Etas_it['Eta_SF']       #Value only valid in iteration it
         
         #Getting the rays dataset and the total energy it should represent
-        rays   = R2a[R2a.hel.isin(hlst)].copy()
-        r_i = len(rays)/len(R2b[R2b.hel.isin(hlst)])                #Fraction of rays that goes into one TOD
+        rays   = R2a[R2a["hel"].isin(hlst)].copy()
+        r_i = len(rays)/len(R2_all[R2_all["hel"].isin(hlst)])  #Fraction of rays that goes into one TOD
         P_SF_i = r_i * P_SF_it * 1e6
         
         #Parameters for receiver. lims are important here
-        Arcv = TOD.receiver_area
-        N_TOD = TOD.n_tods
         xO,yO = TOD.perimeter_points(TOD.radious_out, tod_index=polygon_i-1)
         lims = xO.min(), xO.max(), yO.min(), yO.max()
-        f_Qrc1,Q_rc1,X_rc1,Y_rc1 = get_f_Qrc1(rays['xr'],rays['yr'],lims,P_SF_i)
+        func_Qrc1,Q_rc1,X_rc1,Y_rc1 = get_func_Qrc1(rays['xr'],rays['yr'],lims,P_SF_i)
         
         # Obtaining residence time
         #Getting initial estimates
@@ -571,44 +563,42 @@ def rcvr_HPR_2D_simple(
         x_ini = lims[1]
         y_bot = lims[2]
         y_top = lims[3]
-        A_rc1 = Arcv/N_TOD
-        xavg = A_rc1/(y_top-y_bot)
+        A_rc1 = TOD.receiver_area/TOD.n_tods
+        x_avg = A_rc1/(y_top-y_bot)
         
         if it==1:
-            T_av = 0.5*(T_ini+T_out)     #Estimating Initial guess for t_res
-            Q_av = P_SF_it / Arcv         #Estimated initial guess for Qavg
+            T_av = 0.5*(T_ini+T_out)               #Estimating Initial guess for t_res
+            Q_av = P_SF_it / TOD.receiver_area     #Estimated initial guess for Qavg
             cp = 148*T_av**0.3093  
-            eta_rcv_g = f_eta([T_av,Q_av])[0]
+            eta_rcv_g = func_eta([T_av,Q_av])[0]
         else:      
             eta_rcv_g = eta_rcv
         
         if solve_t_res:
             t_res_g = rho_b * cp * tz * (T_out - T_ini ) / (eta_rcv_g * Q_av*1e6)
             
-            vel_p  = xavg/t_res_g                #Belt velocity magnitud
+            vel_p  = x_avg/t_res_g                #Belt velocity magnitud
             t_sim  = (x_ini-x_fin)/vel_p         #Simulate all the receiver
-            inputs = (x_ini,x_fin,y_bot,y_top,vel_p,t_sim,tz,T_ini,TSM,f_Qrc1,f_eta)
+            inputs = (x_ini,x_fin,y_bot,y_top,vel_p,t_sim,tz,T_ini,TSM,func_Qrc1,func_eta)
             
             # print(Solve_t_res,it,eta_rcv_g,t_res_g,t_sim)    
-            sol  = spo.fsolve(F_Toutavg, t_res_g, args=inputs, full_output=True)
+            sol  = spo.fsolve(func_temp_out_avg, t_res_g, args=inputs, full_output=True)
             t_res = sol[0][0]
             n_evals = sol[1]['nfev']
             CST['t_res'] = t_res
-            CST['vel_p'] = xavg/t_res
+            CST['vel_p'] = x_avg/t_res
         else:
             t_res_g = rho_b * cp * tz * (T_out - T_ini ) / (eta_rcv_g * Q_av*1e6)
             t_res = t_res_g
             
         # Final values for temperature Qstg1 and Mstg1
-        vel_p  = xavg/t_res                #Belt velocity magnitud
+        vel_p  = x_avg/t_res                    #Belt velocity magnitud
         t_sim  = (x_ini-x_fin)/vel_p           #Simulation [s]
         inputs = [x_ini,x_fin,y_bot,y_top,vel_p,t_sim,tz,T_ini,TSM]
-
-
         if full_output:
-            T_p,Qstg1,Mstg1,Rcvr_full = HTM_2D_moving_particles(inputs, f_Qrc1, f_eta, full_output=True)
+            T_p,Qstg1,Mstg1,Rcvr_full = HTM_2D_moving_particles(inputs, func_Qrc1, func_eta, full_output=True)
         else:
-            T_p,Qstg1,Mstg1= HTM_2D_moving_particles(inputs,f_Qrc1,f_eta)
+            T_p,Qstg1,Mstg1= HTM_2D_moving_particles(inputs,func_Qrc1,func_eta)
         
         ############################################################
         
@@ -616,14 +606,16 @@ def rcvr_HPR_2D_simple(
         eta_rcv = Qstg1*1e6/P_SF_i
         Qstg = Qstg1 / r_i
         Mstg = Mstg1 / r_i
-        Q_av = P_SF_it / Arcv
+        Q_av = P_SF_it / TOD.receiver_area
         Q_max = Q_rc1.max()/1000.
         
         P_SF  = Prcv / eta_rcv
         Q_acc = SF['Q_h1'].cumsum()
         N_new = len( Q_acc[ Q_acc < P_SF ] ) + 1
         
-        data.append([Arcv, N_hel, Q_max, Q_av, P_SF_i, Qstg, P_SF_it, eta_rcv, eta_SF_it, Mstg, t_res, T_p.mean() ])
+        data.append([TOD.receiver_area, N_hel, Q_max, Q_av,
+                    P_SF_i, Qstg, P_SF_it, eta_rcv,
+                    eta_SF_it, Mstg, t_res, T_p.mean()])
         # print('\t'.join('{:.3f}'.format(x) for x in data[-1]))
         
         conv = abs(Qstg-Prcv)<0.1 and (abs(T_p.mean()-T_out)<1.)
