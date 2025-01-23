@@ -17,6 +17,10 @@ import sys
 from bdr_csp import BeamDownReceiver as BDR
 from bdr_csp import htc
 
+from bdr_csp.BeamDownReceiver import (
+    TertiaryOpticalDevice
+)
+
 #######################################
 #%% HEAT TRANSFER CORRELATIONS
 
@@ -79,8 +83,8 @@ def HTM_0D_blackbox(
 def HTM_2D_moving_particles(inputs, f_Qrc1, f_eta, full_output=False):
     
     x_ini, x_fin, y_bot, y_top, P_vel, t_sim, tz, T_ini, TSM = inputs
-    air=ct.Solution('air.xml')
-    Fc = 2.57
+
+
     #Belt vector direction and vector direction
     B_xi = x_ini
     B_yi = (y_bot + y_top)/2.
@@ -111,13 +115,16 @@ def HTM_2D_moving_particles(inputs, f_Qrc1, f_eta, full_output=False):
     
     t = dt
     if full_output:
-        P = {'t':[],'x':[],'y':[],'Tp':[],'Q_in':[], 'eta':[], 'Tnew':[], 'rcv_in':[], 'dT':[], 'Q_gain':[]}
+        P = {'t':[],'x':[],'y':[],
+             'Tp':[],'Q_in':[], 'eta':[],
+             'Tnew':[], 'rcv_in':[], 'dT':[],
+             'Q_gain':[]}
     
     while t <= t_sim+dt:
         
-        Q_in = f_Qrc1.ev(B_x,B_y)/1000
+        Q_in = f_Qrc1(np.array([B_x,B_y]).transpose())/1000
         
-        eta = np.array([f_eta(T_B[j],Q_in[j])[0] for j in range(len(T_B))])
+        eta = np.array([f_eta([T_B[j],Q_in[j]])[0] for j in range(len(T_B))])
         
         Q_in = np.where(Q_in>0.01,Q_in,0.0)
         rcv_in = np.where(Q_in>0.01,True,False)
@@ -152,7 +159,8 @@ def HTM_2D_moving_particles(inputs, f_Qrc1, f_eta, full_output=False):
         t += dt
     
     if full_output:
-        for x in P.keys():  P[x]=np.array(P[x])
+        for x in P.keys():
+            P[x]=np.array(P[x])
     
     T_out_av = T_B.mean()
     if TSM =='CARBO':
@@ -206,7 +214,7 @@ def HTM_3D_moving_particles(CST,TOD,inputs,f_Qrc1,f_eta,full_output=True):
         
         #Obtaining the Q_in and efficiency for the top
         Q_in = f_Qrc1.ev(P_x,P_y)/1000              #This is in MW/m2
-        eta = np.array([f_eta(T_B[j],Q_in[j])[0] for j in range(len(T_B))])
+        eta = np.array([f_eta([T_B[j],Q_in[j]])[0] for j in range(len(T_B))])
         
         Q_in = np.where(Q_in>0,Q_in,0.0)
         rcv_in = np.where(Q_in>0,True,False)
@@ -270,15 +278,18 @@ def HTM_3D_moving_particles(CST,TOD,inputs,f_Qrc1,f_eta,full_output=True):
 
 def get_f_eta():
     Fc = 2.57
-    air  = ct.Solution('air.xml')
+    air  = ct.Solution('air.yaml')
     Tps = np.arange(700.,2001.,100.)
-    qis = np.append(np.arange(0.10,1.01,0.1),np.arange(1.25,4.01,0.25))
-    data=[]
-    for (Tp,qi) in [(Tp,qi) for Tp in Tps for qi in qis]:
-        eta_th = HTM_0D_blackbox(Tp, qi,Fc=Fc,air=air)[0]
-        data.append([Tp,qi,eta_th])
-    data = np.array(data)
-    return spi.interp2d(data[:,0],data[:,1],data[:,2])     #Function to interpolate
+    qis = np.arange(0.10,4.01,0.1)
+    eta_ths = np.zeros((len(Tps),len(qis)))
+    for (i,j) in [(i,j) for i in range(len(Tps)) for j in range(len(qis))]:
+        eta_ths[i,j] = HTM_0D_blackbox(Tps[i], qis[j], Fc=Fc, air=air)[0]
+    return spi.RegularGridInterpolator(
+        (Tps,qis),
+        eta_ths,
+        bounds_error = False,
+        fill_value = None
+        )
 
 
 def get_f_Qrc1(xr,yr,lims,P_SF1):
@@ -286,14 +297,27 @@ def get_f_Qrc1(xr,yr,lims,P_SF1):
     xmin,xmax,ymin,ymax = lims
     
     Nx = 50; Ny = 50
-    dx = (xmax-xmin)/Nx; dy = (ymax-ymin)/Nx; dA=dx*dy
+    dx = (xmax-xmin)/Nx
+    dy = (ymax-ymin)/Nx
+    dA=dx*dy
     Nrays = len(xr)
     Fbin    = P_SF1 /(1e3*dA*Nrays)
-    Q_rc1,X_rc1, Y_rc1 = np.histogram2d(xr,yr,bins=[Nx,Ny],range=[[xmin, xmax], [ymin, ymax]], density=False)
+    Q_rc1,X_rc1, Y_rc1 = np.histogram2d(
+        xr,
+        yr,
+        bins=[Nx,Ny],
+        range=[[xmin, xmax], [ymin, ymax]],
+        density=False
+    )
     Q_rc1 = Fbin * Q_rc1
     
-    f_Qrc1 = spi.RectBivariateSpline(X_rc1[:-1],Y_rc1[:-1],Q_rc1)     #Function to interpolate
-    
+    # f_Qrc1 = spi.RectBivariateSpline(X_rc1[:-1],Y_rc1[:-1],Q_rc1)     #Function to interpolate
+    f_Qrc1 = spi.RegularGridInterpolator(
+        [X_rc1[:-1],Y_rc1[:-1]],
+        Q_rc1,
+        bounds_error = False,
+        fill_value = None
+        )
     return f_Qrc1, Q_rc1, X_rc1, Y_rc1
 
 ##############################################
@@ -337,9 +361,7 @@ def rcvr_HPR_0D_old(CST):
 ###############################################
 def rcvr_HPR_0D(CST, Fc=2.57, air=ct.Solution('air.yaml')):
     
-    ###############################################
     Prcv, Qavg, Tin, Tout, tz  = [CST[x] for x in ['P_rcv','Qavg','T_pC','T_pH', 'tz']]
-    ###############################################
     
     Tp = 0.5*(Tin+Tout)
     eta_rcv = HTM_0D_blackbox(Tp, Qavg,Fc=Fc,air=air)[0]
@@ -480,7 +502,14 @@ def rcvr_HPR_2D(CST, SF, R2):
     return T_p, [ N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, Mstg, t_res ]
 
 
-def rcvr_HPR_2D_simple(CST, SF, R2, polygon_i=1,full_output=False):
+def rcvr_HPR_2D_simple(
+        CST: dict,
+        TOD: TertiaryOpticalDevice,
+        SF: pd.DataFrame,
+        R2: pd.DataFrame,
+        polygon_i: int = 1,
+        full_output: bool = False
+    ):
     
     def F_Toutavg(t_res_g,*args):
         x_ini,x_fin,y_bot,y_top,P_vel,t_sim,tz,T_ini,TSM,f_Qrc1,f_eta = args
@@ -492,7 +521,6 @@ def rcvr_HPR_2D_simple(CST, SF, R2, polygon_i=1,full_output=False):
         return T_p.mean()-T_out
     
     T_ini, T_out, tz, TSM, Prcv, Qavg = [CST[x] for x in ['T_pC', 'T_pH', 'tz', 'TSM', 'P_rcv', 'Qavg']]
-    Type, Array, rO, Cg, zrc = [CST[x] for x in ['Type', 'Array','rO_TOD','Cg_TOD','zrc']]
 
     if CST['TSM'] == 'CARBO':
         rho_b = 1810
@@ -502,56 +530,59 @@ def rcvr_HPR_2D_simple(CST, SF, R2, polygon_i=1,full_output=False):
     
     #Initial guess for number of heliostats
     T_av = (T_ini+T_out)/2
-    eta_rcv = f_eta(T_av, Qavg)[0]
+    eta_rcv = f_eta([T_av, Qavg])[0]
     P_SF  = Prcv / eta_rcv
     
     Q_acc = SF['Q_h1'].cumsum()
     N_hel = len( Q_acc[ Q_acc < P_SF ] ) + 1
         
-    R2a = R2[(R2.hit_rcv)&(R2.Npolygon==polygon_i)].copy()  #Rays into 1 receiver
-    R2b = R2[(R2.hit_rcv)].copy()                           #Total Rays into receivers
-    # N_hel = len(SF)
-    it_max = 20;
-    it = 1; loop=0;
-    data = []; N_hels = []
-    Solve_t_res = False
+    R2a = R2[(R2["hit_rcv"])&(R2["Npolygon"]==polygon_i)].copy()  #Rays into 1 receiver
+    R2b = R2[(R2["hit_rcv"])].copy()                           #Total Rays into receivers
+    
+    it_max = 20
+    it = 1
+    loop=0
+    data = []
+    N_hels = []
+    solve_t_res = False
     while True:
         
         hlst    = SF.iloc[:N_hel].index
         SF_it   = SF.loc[hlst]              #Array only valid in iteration it
         Etas_it = SF_it.mean()              #Array only valid in iteration it
-        P_SF_it = SF_it.Q_pen.sum()         #Value only valid in iteration it
+        P_SF_it = SF_it["Q_pen"].sum()         #Value only valid in iteration it
         eta_SF_it = Etas_it['Eta_SF']       #Value only valid in iteration it
         
-        ############################################################
         #Getting the rays dataset and the total energy it should represent
         rays   = R2a[R2a.hel.isin(hlst)].copy()
         r_i = len(rays)/len(R2b[R2b.hel.isin(hlst)])                #Fraction of rays that goes into one TOD
         P_SF_i = r_i * P_SF_it * 1e6
         
         #Parameters for receiver. lims are important here
-        TOD = BDR.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},0.,0.,zrc)
-        N_TOD,V_TOD,H_TOD,rO,rA,x0,y0,Arcv = [TOD[x] for x in ['N', 'V', 'H', 'rO', 'rA', 'x0', 'y0', 'A_rcv']]
-        xO,yO = BDR.TOD_XY_R(rO,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)    
+        Arcv = TOD.receiver_area
+        N_TOD = TOD.n_tods
+        xO,yO = TOD.perimeter_points(TOD.radious_out, tod_index=polygon_i-1)
         lims = xO.min(), xO.max(), yO.min(), yO.max()
         f_Qrc1,Q_rc1,X_rc1,Y_rc1 = get_f_Qrc1(rays['xr'],rays['yr'],lims,P_SF_i)
         
-        ###########################################################
         # Obtaining residence time
         #Getting initial estimates
-        x_fin=lims[0]; x_ini = lims[1]; y_bot=lims[2]; y_top=lims[3]
-        A_rc1  = Arcv/N_TOD
-        xavg   = A_rc1/(y_top-y_bot)
+        x_fin = lims[0]
+        x_ini = lims[1]
+        y_bot = lims[2]
+        y_top = lims[3]
+        A_rc1 = Arcv/N_TOD
+        xavg = A_rc1/(y_top-y_bot)
         
         if it==1:
             T_av = 0.5*(T_ini+T_out)     #Estimating Initial guess for t_res
             Q_av = P_SF_it / Arcv         #Estimated initial guess for Qavg
-            cp = 148*T_av**0.3093
-            eta_rcv_g = f_eta(T_av,Q_av)[0]
+            cp = 148*T_av**0.3093  
+            eta_rcv_g = f_eta([T_av,Q_av])[0]
         else:      
             eta_rcv_g = eta_rcv
         
-        if Solve_t_res:
+        if solve_t_res:
             t_res_g = rho_b * cp * tz * (T_out - T_ini ) / (eta_rcv_g * Q_av*1e6)
             
             vel_p  = xavg/t_res_g                #Belt velocity magnitud
@@ -572,7 +603,8 @@ def rcvr_HPR_2D_simple(CST, SF, R2, polygon_i=1,full_output=False):
         vel_p  = xavg/t_res                #Belt velocity magnitud
         t_sim  = (x_ini-x_fin)/vel_p           #Simulation [s]
         inputs = [x_ini,x_fin,y_bot,y_top,vel_p,t_sim,tz,T_ini,TSM]
-        # print(Solve_t_res,it,eta_rcv_g,t_res,t_sim)
+
+
         if full_output:
             T_p,Qstg1,Mstg1,Rcvr_full = HTM_2D_moving_particles(inputs, f_Qrc1, f_eta, full_output=True)
         else:
@@ -604,19 +636,18 @@ def rcvr_HPR_2D_simple(CST, SF, R2, polygon_i=1,full_output=False):
             break
         
         if N_new in N_hels:
-            Solve_t_res=True
-            # print(loop,N_new)
+            solve_t_res=True
             N_new = (N_hel + N_new)//2
             if N_new in N_hels:
                 N_new +=1
             loop+=1
         
-        if (it==it_max) and conv and (Solve_t_res==False):
+        if (it==it_max) and conv and (solve_t_res==False):
             # print('System did not converge, t_res will be used')
             it_max = 40
-            Solve_t_res = True
+            solve_t_res = True
         
-        if it==it_max and Solve_t_res:
+        if it==it_max and solve_t_res:
             print('System did not converge for either method')
             break
         
@@ -626,11 +657,31 @@ def rcvr_HPR_2D_simple(CST, SF, R2, polygon_i=1,full_output=False):
         
         it+=1
     
-    results = [ N_hel, Q_max, Q_av, P_SF_i, Qstg, P_SF_it, eta_rcv, Mstg, t_res, vel_p, it, Solve_t_res]
+    results = {
+        "temps_parts": T_p,
+        "n_hels" : N_hel,
+        "rad_flux_max": Q_max,
+        "rad_flux_avg": Q_av,
+        "power_sf_i": P_SF_i,
+        "heat_stored": Qstg,
+        "power_sf_total": P_SF_it,
+        "eta_rcv": eta_rcv,
+        "mass_stg": Mstg,
+        "time_res": t_res,
+        "vel_parts": vel_p,
+        "iteration": it,
+        "solve_t_res": solve_t_res
+    }
     if full_output:
-        return T_p, results, Rcvr_full
-    else:
-        return T_p, results
+        results["full"] = Rcvr_full
+    
+    return results
+
+    # results = [ N_hel, Q_max, Q_av, P_SF_i, Qstg, P_SF_it, eta_rcv, Mstg, t_res, vel_p, it, Solve_t_res]
+    # if full_output:
+    #     return T_p, results, Rcvr_full
+    # else:
+    #     return T_p, results
 
 
 # TILTED PARTICLE RECEIVER (TPR)
@@ -845,12 +896,12 @@ def HTM_2D_tilted_surface(Rcvr, f_Qrc1, f_eta, f_ViewFactor, full_output=False):
         t += dt
     
     if full_output:
-        for x in P.keys():  P[x]=np.array(P[x])
+        for x in P.keys():
+            P[x]=np.array(P[x])
     
     T_out_av = T_B.mean()
     if TSM =='CARBO':
         rho_b = 1810.
-        # cp_b  = (365*((T_B+T_ini)/2 + 273.15)**0.18).mean()
         cp_b  = (148*((T_B+T_ini)/2)**0.3093).mean()
     
     M_stg1 = rho_b * (B_Lz*B_Ly*vel_p)
@@ -899,7 +950,14 @@ def rcvr_TPR_0D(CST):
     return [eta_rcv, P_SF, Tp_avg, t_res, M_p, Arcv, vel_p]
 
 
-def TPR_2D_model(CST,R2,SF,TOD,polygon_i=1,full_output=False):
+def TPR_2D_model(
+        CST: dict,
+        R2: pd.DataFrame,
+        SF: pd.DataFrame,
+        TOD: dict,
+        polygon_i: int = 1,
+        full_output: bool = False
+    ):
     
     #Working only with 1 receiver
     #Selecting as pivoting point the 'most-right' point in receiver
@@ -975,13 +1033,18 @@ def TPR_2D_model(CST,R2,SF,TOD,polygon_i=1,full_output=False):
         ###############################################
         #### GETTING THE RADIATION FLUX FUNCTION
         
-        Nx=100; Ny=50
+        Nx=100
+        Ny=50
         xO,yO = BDR.TOD_XY_R(rO,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)
         xA,yA = BDR.TOD_XY_R(rA,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)
-        xmin,xmax = max(xA.min(),R3i.xt.quantile(0.01)), min(xA.max(),R3i.xt.quantile(0.99))
-        ymin,ymax = max(yA.min(),R3i.yt.quantile(0.01)), min(yA.max(),R3i.yt.quantile(0.99))
+        xmin = max(xA.min(),R3i.xt.quantile(0.01))
+        xmax = min(xA.max(),R3i.xt.quantile(0.99))
+        ymin = max(yA.min(),R3i.yt.quantile(0.01))
+        ymax = min(yA.max(),R3i.yt.quantile(0.99))
 
-        dx = (xmax-xmin)/Nx; dy = (ymax-ymin)/Ny; dA=dx*dy
+        dx = (xmax-xmin)/Nx
+        dy = (ymax-ymin)/Ny
+        dA=dx*dy
         Nrays = len(R3i.xt[(R3i.xt>xmin)&(R3i.xt<xmax)&(R3i.yt>ymin)&(R3i.yt<ymax)])    #Taking out rays that don't hit in receiver
         
         P_SF = eta_SF_it * (CST['Gbn']*CST['A_h1']*N_hel)
@@ -1223,10 +1286,7 @@ def BDR_cost(SF,CST):
     Arcv    = CST['Arcv']
     M_p     = CST['M_p']
     
-    Ci      = CST['Costs_i']
-    # TOD = BDR.TOD_Params({'Type':Type,'Array':Array,'rO':rO,'Cg':Cg},xrc,yrc,zrc)
-    # S_HB = quad(BDR.HB_S_int,rmin,rmax,args=(zf,zrc,fzv))[0]
-    # S_TOD = TOD['S_TOD']
+    Ci      = CST['costs_in']
     
     #Solar field related costs
     R_ftl  = Ci['R_ftl']                   # Field to land ratio, SolarPilot
@@ -1265,7 +1325,7 @@ def BDR_cost(SF,CST):
     #######################################
     # CAPACITY FACTOR
     # CF_sf = Capacity Factor (Solar field)
-    # CF_pb = Capacity Factor (Solar field)
+    # CF_pb = Capacity Factor (Power block)
     
     if CST['type_weather'] == 'TMY':
         if 'file_weather' in CST:
@@ -1284,10 +1344,10 @@ def BDR_cost(SF,CST):
             CF_pb = CF_sf*SM                      # Assumed all is converted into electricity
             
     elif CST['type_weather'] == 'MERRA2':  # Not implemented yet.
-        CF_sf  = Ci['CF_sf']               # It assumes CF_sf is calculated outside and stored
-        CF_pb  = Ci['CF_pb']               # It assumes CF_pb is calculated outside and stored
+        CF_sf  = Ci['CF_sf']               # Assumes CF_sf is calculated outside and stored
+        CF_pb  = Ci['CF_pb']               # Assumes CF_pb is calculated outside and stored
         # print('MERRA2')
-    else:       #If nohing given, assumed default values
+    else:       #If nothing is given, assumed default values
         CF_sf = Ci['CF_sf']
         CF_pb = CF_sf*SM
     
@@ -1300,15 +1360,18 @@ def BDR_cost(SF,CST):
     
     N_sec = 8
     x_c,y_c = SF_in.xi.mean(),SF_in.yi.mean()
-    SF_in['ri_c']  = ((SF_in.xi - x_c)**2 + (SF_in.yi - y_c)**2)**0.5
-    SF_in['theta'] = np.arctan2(SF_in.yi,SF_in.xi)
+    SF_in['ri_c']  = ((SF_in["xi"] - x_c)**2 + (SF_in["yi"] - y_c)**2)**0.5
+    SF_in['theta'] = np.arctan2(SF_in["yi"],SF_in["xi"])
     SF_in['bin'] = SF_in['theta']//(2*np.pi/N_sec) + N_sec/2
     points = pd.DataFrame([],columns=['xi','yi','ri_c'])
     for n in range(N_sec):
-        SF_n = SF_in[SF_in.bin==n]
-        set_n = SF_n.loc[SF_n.ri_c.nlargest(10).index][['xi','yi','ri_c']]
-        points = pd.concat([points,set_n])
-    S_land = np.pi * points.ri_c.mean()**2
+        SF_n = SF_in[SF_in["bin"]==n]
+        set_n = SF_n.loc[SF_n["ri_c"].nlargest(10).index][['xi','yi','ri_c']]
+        if n==0:
+            points = set_n
+        else:
+            points = pd.concat([points,set_n])
+    S_land = np.pi * (points["ri_c"].mean())**2
     
     Co['land'] = ( C_land*S_land*R_ftl + C_site*S_hel )  / 1e6
     
@@ -1437,40 +1500,52 @@ def initial_eta_rcv(CSTi):
     Arcv = (CSTi['P_rcv']/eta_rcv_i) / CSTi['Qavg']
     N_TOD,V_TOD = BDR.TOD_Array(CSTi['Array'])
     rO_TOD = (Arcv / ( V_TOD*N_TOD*np.tan(np.pi/V_TOD) ) )**0.5
-    # Q_avg = (CSTi['P_rcv']/eta_rcv_i) / Arcv
-    # print(eta_rcv_i, Arcv, rO_TOD,Q_avg)
+
     return eta_rcv_i, Arcv, rO_TOD
 
 ##################################
-def run_coupled_simulation(CST, **kwargs):
+
+from bdr_csp.BeamDownReceiver import (
+    SolarField,
+    HyperboloidMirror,
+    TertiaryOpticalDevice
+)
+def run_coupled_simulation(
+        CST: dict,
+        TOD: TertiaryOpticalDevice,
+    **kwargs
+) -> list[pd.DataFrame, pd.DataFrame, dict]:
     
     #Parameters for HB and TOD calculations
-    zf,Type,Array,rO,Cg,xrc,yrc,zrc,Npan = [CST[x] for x in ['zf', 'Type', 'Array', 'rO_TOD', 'Cg_TOD', 'xrc', 'yrc', 'zrc', 'N_pan']]
-    TOD = BDR.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},xrc,yrc,zrc)
-
-    #Getting the RayDataset
+    zf, fzv, xrc, yrc, zrc, Npan = [CST[x] for x in ['zf', 'fzv','xrc', 'yrc', 'zrc', 'N_pan']]
+    eta_hbi = CST["eta_rfl"]
+    Ah1 = CST["A_h1"]
     if 'file_SF' in CST:
         file_SF = CST['file_SF']
     else:
         file_SF = 'Datasets_Thesis/Rays_zf_{:.0f}'.format(zf)
-    
+
+    HSF = SolarField(zf=zf, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
+    HB = HyperboloidMirror(
+        zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=eta_hbi
+    )
+
     #Getting the RayDataset
-    R0, SF = BDR.Rays_Dataset( file_SF, read_plk=True, save_plk=True, N_pan=Npan )
-    
+    R0, SF = HSF.load_dataset(save_plk=True)
+
     #Getting interceptions with HB
-    R1 = BDR.HB_direct( R0 , CST, Refl_error=False)
+    R1 = HB.mcrt_direct(R0, refl_error=True)
     R1['hel_in'] = True
-    rmin = R1['rb'].quantile(0.0001)
-    rmax = R1['rb'].quantile(0.9981)
-    R1['hit_hb'] = (R1['rb']>rmin)&(R1['rb']<rmax)
-    CST['rmin'] = rmin
-    CST['rmax'] = rmax
+    HB.rmin = R1['rb'].quantile(0.0001)
+    HB.rmax = R1['rb'].quantile(0.9981)
+    R1['hit_hb'] = (R1['rb']>HB.rmin)&(R1['rb']<HB.rmax)
+    CST['rmin'] = HB.rmin
+    CST['rmax'] = HB.rmax
     
-    #Shadowing
-    SF = BDR.Shadow_simple(CST,SF)
+    SF = HB.shadow_simple( lat=CST['lat'], lng=CST["lng"], type_shdw="simple", SF=SF)
     
     #Interceptions with TOD
-    R2 = BDR.TOD_NR(R1,TOD,CST,Refl_error=False)
+    R2 = TOD.mcrt_solver(R1, refl_error=False)
     
     ### Optical Efficiencies
     SF = BDR.optical_efficiencies(CST,R2,SF)
@@ -1550,20 +1625,23 @@ def run_coupled_simulation(CST, **kwargs):
     CST['P_el_sim']  = CST['P_rcv_sim'] * eta_pb
     
     # Calculating HB surface
-    rmin = R2[R2.hel_in]['rb'].quantile(0.0001)
-    rmax = R2[R2.hel_in]['rb'].quantile(0.9981)
-    R2['hit_hb'] = (R2['rb']>rmin)&(R2['rb']<rmax)
-    S_HB = quad(BDR.HB_S_int,rmin,rmax,args=(zf,zrc,fzv))[0]
-    zmin,zmax = BDR.HB_zrange(rmin,rmax,zf,zrc,fzv)
+    HB.rmin = R2[R2.hel_in]['rb'].quantile(0.0001)
+    HB.rmax = R2[R2.hel_in]['rb'].quantile(0.9981)
+    R2['hit_hb'] = (R2['rb']>HB.rmin)&(R2['rb']<HB.rmax)
+    
+    HB.get_surface_area(R2)
+    HB.height_range()
     
     #Masses of mirrors
     M_HB_fin, M_HB_mirr, M_HB_str, M_HB_tot = BDR.HB_mass_cooling(R2, CST, SF)
     
     # Final parameters for mirrors
-    CST['rmin'] = rmin; CST['rmax'] = rmax
-    CST['zmin'] = zmin; CST['zmax'] = zmax
-    CST['S_HB']  = S_HB
-    CST['S_TOD'] = TOD['S_TOD']
+    CST['rmin'] = HB.rmin
+    CST['rmax'] = HB.rmax
+    CST['zmin'] = HB.zmin
+    CST['zmax'] = HB.zmax
+    CST['S_HB']  = HB.area
+    CST['S_TOD'] = TOD.surface_area
     CST['S_SF']  = N_hel*A_h1
     CST['S_tot'] = CST['S_HB'] + CST['S_TOD'] + CST['S_SF']
     

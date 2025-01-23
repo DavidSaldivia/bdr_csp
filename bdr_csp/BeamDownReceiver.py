@@ -132,6 +132,8 @@ class HyperboloidMirror():
     rmin: float|None = None
     rmax: float|None = None
     area: float|None = None
+    zmin: float|None = None
+    zmax: float|None = None
 
     @property
     def zv(self) -> float:
@@ -149,6 +151,8 @@ class HyperboloidMirror():
         a , b   = c*( 2*fvh - 1 ) , 2*c*np.sqrt(fvh - fvh**2)
         zmin = (rmin**2/b**2 + 1 )**0.5*a + zo
         zmax = (rmax**2/b**2 + 1 )**0.5*a + zo
+        self.zmin = zmin
+        self.zmax = zmax
         return (zmin,zmax)
 
     def get_surface_area(          # HB_Surface_Direct
@@ -445,7 +449,7 @@ class TertiaryOpticalDevice():
         self.array = params["array"]
         N,V = self.n_tods, self.n_sides
         
-        #For Paraboloid, it requires two of the following parameters: rA, rO, H, Cg
+        #For Paraboloid, it requires two of the following parameters: rA, rO, H, Cg, Arcv
         if TOD_type == 'PB':
             if 'rA' in params and 'rO' in params:
                 rA, rO = params['rA'], params['rO']
@@ -473,6 +477,12 @@ class TertiaryOpticalDevice():
             
             elif 'rO' in params and 'Cg' in params:
                 rO, Cg = params['rO'], params['Cg']
+                rA    = rO*Cg**0.5
+                H     = rA**2-rO**2
+            
+            elif 'Arcv' in params and 'Cg' in params:
+                Arcv, Cg = params["Arcv"], params["Cg"]
+                rO = (Arcv / ( V*N*np.tan(np.pi/V) ) )**0.5
                 rA    = rO*Cg**0.5
                 H     = rA**2-rO**2
             
@@ -985,7 +995,8 @@ class TertiaryOpticalDevice():
         R2 = R1.copy()
         for x in ['xs','ys','zs','xr','yr','zr','uxr','uyr','uzr','hit_rcv','Nr_tod']:
             R2[x]=R2f[x]
-        # R2['hit_rcv'].fillna(False,inplace=True)
+
+        R2["hit_rcv"] = R2["hit_rcv"].convert_dtypes()
         R2.fillna({'hit_rcv':False},inplace=True)
         R2.fillna({'Nr_tod': 0}, inplace=True)
 
@@ -1200,7 +1211,47 @@ def heliostat_selection(
     return R2, Etas, SF, status
 
 
-#  GENERAL FUNCTIONS ##############################
+def optical_efficiencies(
+        CST: dict,
+        R2: pd.DataFrame,
+        SF: pd.DataFrame
+    ) -> pd.DataFrame:
+    """
+    Function to obtain the optical efficiencies after a BDR simulation.
+
+    Parameters
+    ----------
+    CST : dict.
+        Characteristics of CST plant
+    R2 : pandas DataFrame
+        Ray dataset AFTER TOD simulation
+    SF : pandas DataFrame
+        Solar field heliostats AFTER simulations
+
+    Returns
+    -------
+    SF : pandas DataFrame
+        Same as SF input but including efficiencies
+
+    """
+    
+    Gbn,A_h1,eta_rfl = [CST[x] for x in ['Gbn', 'A_h1', 'eta_rfl']]
+    
+    SF2 = R2.groupby('hel')[['hel_in','hit_hb','hit_tod','hit_rcv']].sum()
+    SF['Eta_att'] = get_eta_attenuation(R2)
+    SF['Eta_hbi'] = SF2['hit_hb']/SF2['hel_in']
+    SF['Eta_tdi'] = SF2['hit_tod']/SF2['hit_hb']
+    Nr_tod = R2[R2['hit_rcv']].groupby('hel')['Nr_tod'].mean()
+    SF['Eta_tdr'] = (SF2['hit_rcv']/SF2['hit_tod']) * eta_rfl**Nr_tod
+    SF['Eta_hel'] = SF['Eta_cos'] * SF['Eta_blk'] * SF['Eta_att'] * eta_rfl
+    SF['Eta_BDR'] = (eta_rfl * SF['Eta_hbi']) * (SF['Eta_tdi'] * SF['Eta_tdr'])
+    SF['Eta_SF']  = SF['Eta_hel'] * SF['Eta_BDR']
+    SF['Q_h1']  = ( SF['Eta_SF']*Gbn*A_h1*1e-6 )
+    SF['Q_pen'] = SF['Q_h1']*SF['f_sh']
+    SF.sort_values(by='Q_pen',ascending=False,inplace=True)
+    return SF
+
+#  OLD FUNCTIONS #########
 
 def CST_BaseCase(**kwargs) -> dict[str, Any]:
     """
@@ -1227,7 +1278,7 @@ def CST_BaseCase(**kwargs) -> dict[str, Any]:
     CST['lng']   = 115.9              # Longitude [°]
     CST['T_amb'] = 300.               # Ambient Temperature [K]
     CST['type_weather'] = 'TMY'       # Weather source (for CF) Accepted: TMY, MERRA2, None
-    CST['file_weather'] = 'projects/spr/weather/Alice_Springs_Real2000_Created20130430.csv'       # Weather source (for CF) Accepted: TMY, MERRA2, None
+    CST['file_weather'] = None        # Weather source (for CF)
 
     # Characteristics of Solar Field
     CST['eta_rfl'] = 0.95                     # Includes mirror refl, soiling and refl. surf. ratio. Used also for HB and TOD
@@ -1401,9 +1452,13 @@ def HB_mass_cooling(
         return dA
     
     dS_HB = HB_dAs(Xc,Yc,CST)*dx*dy
-    Rc = np.sqrt(Xc**2+Yc**2)
+    Rc = np.sqrt( Xc**2 + Yc**2 )
     S_HB = dS_HB[(Rc>CST['rmin'])&(Rc<CST['rmax'])].sum()
-    Fbin = CST['eta_rfl']*Etas['Eta_cos']*Etas['Eta_blk']*(CST['Gbn']*CST['A_h1']*N_hel)/(1e3*dS_HB*len(out))
+    Fbin = (
+        CST['eta_rfl']*Etas['Eta_cos']*Etas['Eta_blk']
+        *(CST['Gbn']*CST['A_h1']*N_hel)
+        /(1e3*dS_HB*len(out))
+    ) 
     Q_HB = Fbin * Q_HB
     
     Q_HB_tot = (Q_HB*dS_HB).sum()               #kW
@@ -1430,91 +1485,6 @@ def HB_mass_cooling(
     else:
         return [M_fin_tot,M_mirr_tot,M_str_tot,M_HB_tot]
 
-
-#%% ############# TOD SUBROUTINES #####################################
-def TOD_Array(array: str) -> tuple[int,int]:
-    """
-    From an Array label, return the number of TOD and the number of sides.
-    Designs 'A' to 'E' are polygonal arrays
-    Design 'F' is Full circle
-    Design 'N' is None (no CPC or PB and rA = rO)
-
-    """
-    match array:
-        case "A":       # 3 hexagons with centered vertix
-            (N_TOD, V_TOD) = ( 3, 6 )
-        case "B":       # 7 hexagons, with one centered
-            (N_TOD, V_TOD) = ( 7, 6 )
-        case "C":       # 4 squares, with centered vertix
-            (N_TOD, V_TOD) = ( 4, 4 )
-        case "D":       # 4 squares, with two sharing center and two in shorter side
-            (N_TOD, V_TOD) = ( 4, 4 )
-        case "E":       # 1 octagon centered
-            (N_TOD, V_TOD) = ( 1, 8 )
-        case "F":     # Full circle
-            (N_TOD, V_TOD) = ( 1, 1e6 )
-        case "N":       # Non-TOD
-            (N_TOD, V_TOD) = ( 1, 0 )
-        case _:         # Wrong Design label
-            (N_TOD, V_TOD) = ( 0, 0 )
-    return (N_TOD, V_TOD)
-
-
-def TOD_Centers(
-        array: str,
-        rA: float,
-        xrc: float = 0.0,
-        yrc=0
-    ) -> tuple[list[float], list[float]]:
-    """
-    From a design, an aperture radius and a TOD position, it returns the centers of all polygon TODs
-
-    Parameters
-    ----------
-    Array : label (str)
-        TOD Array type
-    rA : float
-        TOD aperture radius.
-    xrc, yrc : floats
-        Center position (second focal point). Usually assumed equals to zero.
-
-    Returns
-    -------
-    x0 : list
-        x values for center positions.
-    y0 : list
-        y values for center positions.
-
-    """
-    
-    V_TOD = TOD_Array(array)[1]
-    phi   = np.radians(360/V_TOD) if (V_TOD > 0) else 2*np.pi
-    match array:
-        case "A":
-            x0 = [ (2*rA/3**0.5)*np.cos(2*n*phi) + xrc for n in range(3) ]
-            y0 = [ (2*rA/3**0.5)*np.sin(2*n*phi) + yrc for n in range(3) ]
-        case "B":
-            x0 = [xrc] + [ (2*rA)*np.sin(phi*n) + xrc for n in range(6) ]
-            y0 = [yrc] + [ (2*rA)*np.cos(phi*n) + yrc for n in range(6) ]
-        case "C":
-            x0 = [ (2*rA/2**0.5)*np.cos(n*phi) + xrc for n in range(4) ]
-            y0 = [ (2*rA/2**0.5)*np.sin(n*phi) + yrc for n in range(4) ]
-        case "D":
-            x0 = [rA/2**0.5, -rA/2**0.5, 2**0.5*rA, -2**0.5*rA]
-            y0 = [-rA/2**0.5, rA/2**0.5, 2**0.5*rA, -2**0.5*rA]
-        case "E":
-            x0 = [0.]
-            y0 = [0.]
-        case "F":
-            x0 = [0.]
-            y0 = [0.]
-        case "N":
-            x0 = [0.]
-            y0 = [0.]
-        case _:
-            x0 = [0.]
-            y0 = [0.]
-    return (x0, y0)
 
 
 def PB_Z(
@@ -1612,158 +1582,6 @@ def TOD_XY_R(
     yy = np.append(yy,-np.flip(yy)) + yo
     
     return xx,yy
-
-
-def TOD_Params(
-        TOD: dict[str,float],
-        xrc: float,
-        yrc: float,
-        zrc: float
-        )-> dict[str, float]:
-    """
-    Function that calculates the main geometric parameters for TOD array.
-
-    Parameters
-    ----------
-    Type            : Type of TOD concentrator (Could be 'CPC', 'PB', or None)
-    Array           : Type of TOD array (see TOD_Dsgn function)
-    xrc, yrc, zrc   : Position of aperture plane (second focal point)
-    TOD             : Must be at least two of these combinations on a dict: rA, rO, H, Cg
-
-    Returns TOD (dict) with the following keys
-    -------
-    rA    : Aperture radius
-    rO    : receiver (output) radius
-    H     : TOD height
-    Cg    : Concentration Ratio
-    S_TOD : Surface of TOD Array [m2].
-    A_TOD : Aperture TOD Array Area [m2].
-    A_rcv : Outlet TOD Array Area (equal to receiver area) [m2].
-    rBDR  : Radius of TOD Array [m]
-    theta : TOD concentration angle.
-    """
-
-    #Depending the parameters received, the others are calculated
-    TOD_type  = TOD['Type']
-    
-    #For Paraboloid, it requires two of the following parameters: rA, rO, H, Cg
-    if TOD_type == 'PB':
-        if 'rA' in TOD and 'rO' in TOD:
-            rA,rO = TOD['rA'], TOD['rO']
-            H     = rA**2 - rO**2
-            Cg    = (rA/rO)**2                      #Concentration ratio of each TOD
-            
-        elif 'rA' in TOD and 'H' in TOD:
-            rA,H  = TOD['rA'], TOD['H']
-            rO    = (rA**2 - H)**0.5               # Check if it is over limits
-            if rO<0:
-                print("Height is too much for rA, will be replaced by height for min rO")
-                rO = 0.2
-                H  = rA**2-rO**2
-            Cg = (rA/rO)**2
-        
-        elif 'rA' in TOD and 'Cg' in TOD:
-            rA,Cg = TOD['rA'], TOD['Cg']
-            rO    = rA/Cg**0.5
-            H     = rA**2 - rO**2
-        
-        elif 'rO' in TOD and 'H' in TOD:
-            rO,H  = TOD['rO'], TOD['H']
-            rA    = (H + rO**2)**0.5
-            Cg    = (rA/rO)**2
-        
-        elif 'rO' in TOD and 'Cg' in TOD:
-            rO,Cg = TOD['rO'], TOD['Cg']
-            rA    = rO*Cg**0.5
-            H     = rA**2-rO**2
-        
-        else:
-            raise ValueError("Wrong input parameters")
-            return
-        
-        array = TOD['Array']
-        N, V  = TOD_Array(array)
-        phi   = np.radians(360./V)
-        S1    = V*np.tan(phi/2)/6 * ( ( 1 + 4*rA**2 )**(3/2) - ( 1 + 4*rO**2)**(3/2))
-        S_TOD = N * S1
-        tht   = np.arccos(H**0.5/rA)
-        theta = np.degrees(np.arccos(H**0.5/rA))
-        zmin  = 0.
-        zmax  = rA**2
-        fl    = np.nan
-        
-    #For CPC, for now, it only accepts rO and Cg as initial parameters
-    if TOD_type =='CPC':
-        array, rO, Cg = TOD['Array'], TOD['rO'], TOD['Cg']
-        RtD = 180./np.pi
-        rA = rO * Cg**0.5                   # CPC aperture radius
-        tht_mx = np.arcsin(1/Cg**0.5)       # half acceptance angle
-        fl = rO * (1+np.sin(tht_mx))     # Focal point
-        phi_i = np.pi #/2+tht_mx
-        phi_f = 2*tht_mx
-        
-        Ndz = 1000
-        phi1 = np.linspace(phi_i,phi_f,Ndz)
-        R  = 2 * fl/ ( 1- np.cos(phi1) )
-        r1 = 2 * fl * np.sin(phi1-tht_mx) / ( 1- np.cos(phi1) ) - rO
-        z1 = 2 * fl * np.cos(phi1-tht_mx) / ( 1- np.cos(phi1) )
-        
-        def func_Fzmin(zs,*args):
-            r_out, Cg = args
-            tht = np.arcsin(1/Cg**0.5)
-            rs = 0.
-            a1 = ((rs+r_out)*np.cos(tht) + zs*np.sin(tht))**2
-            a2 = 4*r_out*(1+np.sin(tht))
-            a3 = zs*np.cos(tht) - rs*np.sin(tht) + r_out
-            return a1 - a2*a3
-        zmin = fsolve(func_Fzmin,0,args=(rO,Cg))[0]
-        zmax = 2 * fl * np.cos(phi_f-tht_mx) / ( 1- np.cos(phi_f) )
-        H = zmax
-        tht   = tht_mx
-        theta = np.degrees(tht)
-        
-        N, V = TOD_Array(array)
-        phi   = np.radians(360./V)
-        x0,y0 = TOD_Centers(array,rA,xrc,yrc)
-        
-        zo = 0.
-        dz = (zmax-zo)/Ndz
-        dr = np.ediff1d(r1)
-        S1 = 2*np.pi*sum(r1[:-1]*((dz/dr)**2+1)**0.5*dr)    #Only valid for Full CPC
-        S1 = 2*V*np.tan(np.pi/V)*sum(r1[:-1]*((dz/dr)**2+1)**0.5*dr)    #For polygon
-        S_TOD = N * S1
-        
-    elif (TOD_type is None) or (TOD_type == 'N'):
-        array = 'N'
-        N,V,phi,S1,H,Cg, = 0,0,0,0,0,1
-        rO,rA = TOD['rO'],TOD['rO']
-    
-    
-    #Getting the centers. This is valid for both PB and CPC
-    x0,y0 = TOD_Centers(array,rA,xrc,yrc)
-    
-    ## Creating the new dictionary
-    TOD = {'Type'  :  TOD_type,
-           'Array' :  array,
-           'N'     :  N,
-           'V'     :  V,
-           'rA'    :  rA,
-           'rO'    :  rO,
-           'H'     :  H,
-           'Cg'    :  Cg,
-           'S_TOD' :  S_TOD ,
-           'A_TOD' :  V * rA**2 * np.tan(phi/2) * N,
-           'A_rcv' :  V * rO**2 * np.tan(phi/2) * N,
-           'x0'    :  x0,
-           'y0'    :  y0,
-           'theta' :  theta,
-           'tht'   : tht,
-           'fl'    :  fl,
-           'zmin'  : zmin,
-           'zmax'  : zmax
-           }
-    
-    return TOD
 
 
 def PB_direct(
@@ -1957,18 +1775,8 @@ def PB_direct(
     return R2
 
 
-def TOD_A_rqrd(rO: float,*args) -> float:
-#This function is to calculate the required area given some
-    A_rcv_rq, Array, CST, Cg = args
-    xrc,yrc,zrc = CST['xrc'], CST['yrc'], CST['zrc']
-    TOD = {'Type':'PB','Array':Array,'rO':rO,'Cg':Cg}
-    TOD   = TOD_Params( TOD, xrc,yrc,zrc)
-    A_rcv = TOD['A_rcv']
-    return (A_rcv - A_rcv_rq)
-
-
 #%% FINAL OPTICAL DEVICE: CPC AND PARABOLOID
-#%%% FUNCTIONS FOR CPC (POLYGON AND REVOLVED)
+
 def CPC_Fk(ks,args):
     R2, Array, r_out, Cg, V = args
     
@@ -2068,345 +1876,6 @@ def PB_Fk(ki,R2,V):
     zs = R2['zn'] + ki*R2['uzn']
     zp = PB_Z(xs,ys,V,R2['xo'],R2['yo'])
     return zp - zs
-
-
-#%%% SOLVER FOR CPC AND PARABOLOID, BOTH 3D AND POLYGON, USING NEWTON-RAPHSON FOR DATAFRAMES
-def TOD_NR(
-        R1: pd.DataFrame,
-        TOD: dict,
-        zrc: float,
-        refl_error: bool = True
-    ) -> pd.DataFrame:
-    
-    Type,Array,N_TOD,V_TOD,H_TOD,rA,rO,x0,y0,zmin,zmax,Cg = [ TOD[x] for x in ['Type', 'Array', 'N', 'V', 'H', 'rA', 'rO', 'x0', 'y0','zmin','zmax','Cg']]
-    
-    #If there is no TOD, the function return R2==R1 with some extra labels
-    if Array=='N':
-        R2 = R1.copy()
-        R2['hit_rcv'] = (R2['rc'] < rA) & (R2['hit_hb'])
-        R2['hit_tod'] = R2['hit_rcv']
-        R2['Nr_tod'] = 0
-        R2['xr'] = R2['xc']
-        R2['yr'] = R2['yc']
-        R2['zr'] = R2['zc']
-        R2['uxr'] = R2['uxb']
-        R2['uyr'] = R2['uyb']
-        R2['uzr'] = R2['uzb']
-        return R2
-    
-    # INITIAL CALCUALTIONS
-    #Getting the rays that enter the mirror and local-global coordinate variables
-    # CPCs
-    if (Type == 'CPC' and Array == 'F'):
-        zV = zrc - H_TOD
-        zA = H_TOD
-        zO = 0.
-        R1['xo'] = x0[0]; R1['yo'] = y0[0];
-        R1['hit_tod'] = (
-            CPC_enter(R1['xc'], R1['yc'], rA, Array, V_TOD, R1['xo'], R1['yo'])
-            & R1['hit_hb']
-        )
-        R1['Npolygon'] = np.where( R1['hit_tod'], 1, 0)
-    
-    elif (Type =='CPC' and Array in ['A','B','C','D','E']):
-        zV = zrc - H_TOD
-        zA = H_TOD
-        zO = 0.
-        R1['Npolygon'] = 0
-        R1['xo'] = np.nan
-        R1['yo'] = np.nan
-        xc = R1[R1['hit_hb']]['xc']
-        yc = R1[R1['hit_hb']]['yc']
-        xo,yo,Npolygon = R1['xo'], R1['yo'], R1['Npolygon']
-        for i in range(N_TOD):
-            x0i, y0i = x0[i], y0[i]
-            hit = CPC_enter(R1['xc'],R1['yc'],rA,Array,V_TOD,x0i,y0i)
-            aux = hit[hit]
-            xo.update( x0i*aux )
-            yo.update( y0i*aux )
-            Npolygon.update((i+1)*aux)
-            xc = xc[~hit]
-            yc = yc[~hit]
-        R1['hit_tod'] = np.where(R1['Npolygon']>0,True,False)
-    
-    # Paraboloids
-    elif (Type == 'PB' and Array == 'F'):
-        zV = zrc - rA**2
-        zA = rA**2
-        zO = rO**2
-        R1['hit_tod'] = (R1['rc']<rA)&(R1['hit_hb'])
-        R1['Npolygon'] = np.where(R1['hit_tod'],1,0)
-        R1['xo'] = x0[0]; R1['yo'] = y0[0];
-        
-    elif (Type =='PB' and Array in ['A','B','C','D','E']):
-        zV = zrc - rA**2
-        zA = rA**2
-        zO = rO**2
-        
-        R1['Npolygon'] = 0
-        R1['xo'] = np.nan
-        R1['yo'] = np.nan
-        xc = R1[R1['hit_hb']]['xc']
-        yc = R1[R1['hit_hb']]['yc']
-        xo,yo,Npolygon = R1['xo'], R1['yo'], R1['Npolygon']
-        for i in range(N_TOD):
-            x0i, y0i = x0[i], y0[i]
-            hit = PB_Z( xc, yc, V_TOD, x0i, y0i) < zA
-            aux = hit[hit]
-            xo.update( x0i*aux )
-            yo.update( y0i*aux )
-            Npolygon.update((i+1)*aux)
-            xc = xc[~hit]
-            yc = yc[~hit]
-        R1['hit_tod'] = np.where(R1['Npolygon']>0,True,False)
-    
-    
-    #INITIAL DF
-    R2 = R1[R1['hit_tod']][['xc','yc','zc','uxb','uyb','uzb','xo','yo','hit_tod','Npolygon']]
-    R2.rename(
-        columns={
-            'xc':'xn', 'yc':'yn', 'zc':'zn',
-            'uxb':'uxn', 'uyb':'uyn', 'uzb':'uzn'
-            },
-        inplace = True
-    )
-    R2['xs'] = 0.
-    R2['ys'] = 0.
-    R2['zs'] = 0.
-    R2['hit_rcv'] = False
-    R2['Nr_tod']  = 0
-    R2['zn'] = zA           #moving everything to TOD coordinates
-    R2f = R2.copy()         #this will be the final df
-    R2f['xr'] = np.nan
-    R2f['yr'] = np.nan
-    R2f['zr'] = np.nan
-    R2f['rr'] = np.nan
-    R2f['uxr'] = np.nan
-    R2f['uyr'] = np.nan
-    R2f['uzr'] = np.nan
-    
-    # STARTING THE LOOP
-    Nrfl = 1
-    rays_ant = 0
-    method = 'NR'
-    tol=1e-4
-    h = 1e-4
-    while True:
-    
-        # CALCULATING FOR INTERSECTIONS
-        N_ini=len(R2)
-        # For PB-F it is possible to solve the equations directly.
-        # All other PBs and CPCs require non-linear solver
-        
-        if (Type == 'PB' and Array == 'F'):
-            p2 = R2['uxn']**2 + R2['uyn']**2
-            p1 = 2*(R2['xn']*R2['uxn'] + R2['yn']*R2['uyn']) - R2['uzn']
-            p0 = R2['xn']**2 + R2['yn']**2 - R2['zn']
-            ks   = np.where(
-                abs(p2)>1e-8,
-                ( -p1 + (p1**2 - 4*p2*p0)**0.5 ) / (2*p2),
-                -p0/p1
-            )
-            R2['zs'] = R2['zn'] + ks*R2['uzn']
-            
-            no_sol = ( (R2['zs']>zA) | R2['zs'].isnull() )
-            R2rjct = R2[no_sol]
-            R2f.update(R2rjct)
-            R2 = R2[~no_sol]
-            ks = ks[~no_sol]
-            
-        elif method == 'NR':
-            
-            k_a = pd.Series(h/2,index=R2.index,dtype='float64')
-            k_b = (zmin - R2['zn']) / R2['uzn']
-            
-            if Type == 'CPC':
-                args = (R2, Array, rO, Cg, V_TOD)
-                Fk_a = CPC_Fk(k_a,args)
-                Fk_b = CPC_Fk(k_b,args)
-            elif Type == 'PB':
-                Fk_a = PB_Fk(k_a, R2, V_TOD)
-                Fk_b = PB_Fk(k_b, R2, V_TOD)
-            
-            sol_1 = (Fk_a*Fk_b < 0)
-            R2rjct = R2[~sol_1]
-            R2f.update(R2rjct)
-            R2 = R2[sol_1]
-            
-            ki = (zmin - R2['zn']) / R2['uzn']
-            R2i = R2.copy()
-            ks = ki.copy()
-            for it in range(40):
-                if Type == 'CPC':
-                    args = (R2i, Array, rO, Cg,V_TOD)
-                    dFk = ( CPC_Fk(ki+h/2,args) - CPC_Fk(ki-h/2,args) ) / h
-                    kj  = ki - CPC_Fk(ki,args)/dFk
-                elif Type == 'PB':
-                    dFk = (PB_Fk(ki+h/2,R2i,V_TOD) - PB_Fk(ki-h/2,R2i,V_TOD)) / h
-                    kj  = ki - PB_Fk(ki,R2i,V_TOD)/dFk
-                    
-                err_k = (ki-kj).abs()
-                errmax = err_k.max()
-                ks.update(kj[err_k<tol])
-                R2i = R2i[err_k>tol]
-                ki = kj[err_k>tol]
-                if errmax<tol or len(R2i)==0: break
-            
-        R2['ks'] = ks
-        R2['xs'] = R2['xn'] + ks*R2['uxn']
-        R2['ys'] = R2['yn'] + ks*R2['uyn']
-        R2['zs'] = R2['zn'] + ks*R2['uzn']
-        R2['rs'] = (R2['xs']**2+R2['ys']**2)**0.5
-
-        if Type == 'CPC':
-            R2['hit_rcv'] = (
-                CPC_enter(R2['xs'], R2['ys'], rA, Array, V_TOD, R2['xo'], R2['yo']) 
-                & (R2['zs']<zO)
-            )
-        elif Type == 'PB':
-            R2['hit_rcv'] = (R2['zs']<=zO)
-        
-        # UPDATING RAYS INTO RECEIVER
-        #Rays that already hit the outlet are updated
-        R2rcv = R2[R2['hit_rcv']].copy()
-        if (len(R2rcv)>0):
-            kr = (zO - R2rcv['zs'])/R2rcv['uzn']
-            R2rcv['xr'] = R2rcv['xs']+kr*R2rcv['uxn']
-            R2rcv['yr'] = R2rcv['ys']+kr*R2rcv['uyn']
-            R2rcv['zr'] = R2rcv['zs']+kr*R2rcv['uzn']
-            R2rcv['rr'] = (R2rcv['xr']**2+R2rcv['yr']**2)**0.5
-            R2rcv['uxr'] = R2rcv['uxn']
-            R2rcv['uyr'] = R2rcv['uyn']
-            R2rcv['uzr'] = R2rcv['uzn']
-            
-            R2rcv['xs'] = R2rcv['xn']
-            R2rcv['ys'] = R2rcv['yn']
-            R2rcv['zs'] = R2rcv['zn']
-            R2f.update(R2rcv)
-        
-        # CALCULATING REFLECTED DIRECTION FOR NEXT ITERATION
-        # Rays that goes to next iteration
-        R2 = R2[~R2['hit_rcv']]
-        R2 = R2[(R2['zs']>zO)&(R2['zs']<zA)]
-        R2['Nr_tod'] = Nrfl
-        
-        if Type == 'CPC':
-            args = (Array, V_TOD, rO, Cg, R2['xo'], R2['yo'])
-            ddx = (
-                CPC_Fxyz(R2['xs']+h, R2['ys'], R2['zs'],args) 
-                - CPC_Fxyz(R2['xs']-h, R2['ys'], R2['zs'], args)
-                )/(2*h)
-            ddy = (
-                CPC_Fxyz(R2['xs'],R2['ys']+h,R2['zs'],args) 
-                - CPC_Fxyz(R2['xs'], R2['ys']-h, R2['zs'], args)
-                )/(2*h)
-            ddz = (
-                CPC_Fxyz(R2['xs'],R2['ys'],R2['zs']+h,args) 
-                - CPC_Fxyz(R2['xs'],R2['ys'], R2['zs']-h, args)
-                )/(2*h)
-        
-        elif Type == 'PB' and Array=='F':
-            ddx = 2*R2['xs']
-            ddy = 2*R2['ys']
-            ddz = -1
-        
-        elif Type == 'PB' and Array in ['A','B','C','D','E']:
-            ddx = (
-                PB_Z(R2['xs']+h,R2['ys'],V_TOD,R2['xo'],R2['yo']) 
-                - PB_Z(R2['xs']-h,R2['ys'], V_TOD,R2['xo'],R2['yo'])
-                ) / (2*h)
-            ddy = (
-                PB_Z(R2['xs'],R2['ys']+h,V_TOD,R2['xo'],R2['yo']) 
-                - PB_Z(R2['xs'],R2['ys']-h,V_TOD,R2['xo'],R2['yo'])
-                ) / (2*h)
-            ddz = -1
-            
-        #Calculating perfect reflections
-        nn = (ddx**2+ddy**2+ddz**2)**0.5
-        (nx, ny, nz) = (ddx/nn, ddy/nn, ddz/nn)
-        sc = nx*R2['uxn'] + ny*R2['uyn'] + nz*R2['uzn']
-        uxrp = R2['uxn'] - 2*sc*nx
-        uyrp = R2['uyn'] - 2*sc*ny
-        uzrp = R2['uzn'] - 2*sc*nz
-        
-        #Adding errors to reflections
-        if refl_error:
-            R2['uxr'],R2['uyr'],R2['uzr'] = add_reflection_error(uxrp,uyrp,uzrp)
-        else:
-            R2['uxr'],R2['uyr'],R2['uzr'] = uxrp, uyrp, uzrp          #No reflection errors
-        
-        #Update for next iteration
-        R2['xn'] = R2['xs']
-        R2['yn'] = R2['ys']
-        R2['zn'] = R2['zs']
-        R2['uxn'] = R2['uxr']
-        R2['uyn'] = R2['uyr']
-        R2['uzn'] = R2['uzr']
-        
-        rays_in = sum(R2f['hit_rcv'])
-        # if (rays_in==rays_ant)or(Nrfl==10)or(abs(rays_in-rays_ant)/rays_in < 0.001):
-        if ((rays_in==rays_ant) and (Nrfl>4)) or (Nrfl==10):
-            break
-        else:
-            Nrfl+=1
-            rays_ant = rays_in
-            
-    # Getting the result back
-    R2f['zs'] = R2f['zs'] + zV
-    R2f['zr'] = R2f['zr'] + zV
-    R2 = R1.copy()
-    for x in ['xs','ys','zs','xr','yr','zr','uxr','uyr','uzr','hit_rcv','Nr_tod']:
-        R2[x]=R2f[x]
-    # R2['hit_rcv'].fillna(False,inplace=True)
-    R2.fillna({'hit_rcv':False},inplace=True)
-    R2.fillna({'Nr_tod': 0}, inplace=True)
-
-    return R2
-
-
-def optical_efficiencies(
-        CST: dict,
-        R2: pd.DataFrame,
-        SF: pd.DataFrame
-    ) -> pd.DataFrame:
-    """
-    Function to obtain the optical efficiencies after a BDR simulation.
-
-    Parameters
-    ----------
-    CST : dict.
-        Characteristics of CST plant
-    R2 : pandas DataFrame
-        Ray dataset AFTER TOD simulation
-    SF : pandas DataFrame
-        Solar field heliostats AFTER simulations
-
-    Returns
-    -------
-    SF : pandas DataFrame
-        Same as SF input but including efficiencies
-
-    """
-    
-    Gbn,A_h1,eta_rfl = [CST[x] for x in ['Gbn', 'A_h1', 'eta_rfl']]
-    
-    SF2 = R2.groupby('hel')[['hel_in','hit_hb','hit_tod','hit_rcv']].sum()
-    SF['Eta_att'] = get_eta_attenuation(R2)
-    SF['Eta_hbi'] = SF2['hit_hb']/SF2['hel_in']
-
-    SF['Eta_tdi'] = SF2['hit_tod']/SF2['hit_hb']
-
-    Nr_tod = R2[R2['hit_rcv']].groupby('hel')['Nr_tod'].mean()
-    SF['Eta_tdr'] = (SF2['hit_rcv']/SF2['hit_tod']) * eta_rfl**Nr_tod
-    
-    SF['Eta_hel'] = SF['Eta_cos'] * SF['Eta_blk'] * SF['Eta_att'] * eta_rfl
-    SF['Eta_BDR'] = (eta_rfl * SF['Eta_hbi']) * (SF['Eta_tdi'] * SF['Eta_tdr'])
-    SF['Eta_SF']  = SF['Eta_hel'] * SF['Eta_BDR']
-    SF['Q_h1']  = ( SF['Eta_SF']*Gbn*A_h1*1e-6 )
-    SF['Q_pen'] = SF['Q_h1']*SF['f_sh']
-    SF.sort_values(by='Q_pen',ascending=False,inplace=True)
-    return SF
-
 
 
 

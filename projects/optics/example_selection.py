@@ -233,10 +233,11 @@ def plot_solar_field_etas(
         R2: pd.DataFrame,
         SF: pd.DataFrame,
         Etas: pd.DataFrame,
-        N_hel: int,
         fldr_rslt: str
     ) -> None:
     R2f = pd.merge( R2 , SF[(SF['hel_in'])]['Eta_SF'] , how='inner', on=['hel'] )
+    N_hel = len(R2[R2["hel_in"]]["hel"].unique())
+
     f_s=18
     fig = plt.figure(figsize=(12,8))
     ax1 = fig.add_subplot(111)
@@ -275,14 +276,14 @@ def plot_solar_field_etas(
 
 #Getting the receiver area and the characteristics for CPC
 def get_radious_out(*args):
-    def A_rqrd(rO,*args):
+    def area_rqrd(rO,*args):
         A_rcv_rq, geometry, array, xrc, yrc, zrc, Cg = args
         A_rcv = TertiaryOpticalDevice(
             params={"geometry":geometry, "array":array, "Cg":Cg, "rO":rO},
             xrc=xrc, yrc=yrc, zrc=zrc,
         ).receiver_area
         return A_rcv - A_rcv_rq
-    return fsolve(A_rqrd, 1.0, args=args)[0]
+    return fsolve(area_rqrd, 1.0, args=args)[0]
 
 
 # SETTING CONDITIONS
@@ -365,9 +366,9 @@ class CSPPlant():
 
     # Receiver and Power Block
     power_el = 10.0               #[MW] Target for Net Electrical Power
-    eta_pb  = 0.50               #[-] Power Block efficiency target 
+    eta_pb   = 0.50               #[-] Power Block efficiency target 
     eta_stg  = 0.95               #[-] Storage efficiency target
-    eta_rcv = 0.75               #[-] Receiver efficiency target
+    eta_rcv  = 0.75               #[-] Receiver efficiency target
 
     @property
     def power_th(self) -> float:
@@ -382,7 +383,7 @@ def run_parametric(
         arrays: list,
         Pels: list,
         geometries: list,
-        write_f: bool = False,
+        write_results: bool = False,
         plot: bool = True,
 ):
 
@@ -397,9 +398,18 @@ def run_parametric(
     fldr_rslt = os.path.join(DIR_PROJECT, "testing")
     file_rslt =  os.path.join(fldr_rslt, 'testing.txt')
 
-    txt_header  = 'Pel\tzf\tfzv\tCg\tgeometry\tarray\teta_cos\teta_blk\teta_att\teta_hbi\teta_tdi\teta_tdr\teta_TOD\teta_BDR\teta_SF\tPel_real\tN_hel\tS_hel\tS_HB\tS_TOD\tH_TOD\trO\tQ_max\tstatus\n'
-    file_cols = 'Pel','zf','fzv','Cg','geometry','array','eta_cos','eta_blk','eta_att','eta_hbi','eta_tdi', 'eta_tdr', 'eta_TOD', 'eta_BDR', 'eta_SF', 'Pel_real', 'N_hel', 'S_hel', 'S_HB', 'S_TOD', 'H_TOD', 'rO', 'Q_max','status'
-    if write_f:
+    # txt_header  = 'Pel\tzf\tfzv\tCg\tgeometry\tarray\teta_cos\teta_blk\teta_att\teta_hbi\teta_tdi\teta_tdr\teta_TOD\teta_BDR\teta_SF\tPel_real\tN_hel\tS_hel\tS_HB\tS_TOD\tH_TOD\trO\tQ_max\tstatus\n'
+    file_cols = ['Pel','zf','fzv',
+                 'Cg','geometry','array',
+                 'eta_cos','eta_blk','eta_att',
+                 'eta_hbi','eta_tdi', 'eta_tdr',
+                 'eta_TOD', 'eta_BDR', 'eta_SF',
+                 'Pel_real', 'N_hel', 'S_hel',
+                 'S_HB', 'S_TOD', 'H_TOD',
+                 'rO', 'Q_max','status',]
+    txt_header = '\t'.join(file_cols)+'\n'
+    
+    if write_results:
         f = open(file_rslt,'w')
         f.write(txt_header)
         f.close()
@@ -441,7 +451,7 @@ def run_parametric(
         R2, Etas, SF, status = BDR.heliostat_selection(CST,HSF,HB,TOD)
         
         #Some postcalculations
-        N_hel = len(R2["hel"].unique())
+        N_hel = len(R2[R2["hel_in"]]["hel"].unique())
         S_hel = N_hel * HSF.A_h1
         Pth_real = SF[SF['hel_in']]['Q_h1'].sum()
         Pel_real = Pth_real * (CST['eta_pb']*CST['eta_sg']*CST['eta_rcv'])
@@ -465,7 +475,7 @@ def run_parametric(
         )
         
         print(text_r[:-2])
-        if write_f:
+        if write_results:
             f = open(file_rslt,'a')
             f.write(text_r)
             f.close()
@@ -477,7 +487,7 @@ def run_parametric(
 
             plot_receiver_rad_map(case, R2, Etas, CST, TOD, fldr_rslt)
 
-            plot_solar_field_etas(case, R2, SF, Etas, N_hel, fldr_rslt)
+            plot_solar_field_etas(case, R2, SF, Etas, fldr_rslt)
 
 
 
@@ -488,9 +498,9 @@ def main():
         fzvs  = [0.83,],
         Cgs   = [2.0,],
         arrays = ['A'],
-        geometries = ['CPC'],
+        geometries = ['PB',],
         Pels  = [10],
-        write_f = False,
+        write_results = True,
         plot = True
     )
 
