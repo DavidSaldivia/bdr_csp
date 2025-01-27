@@ -32,15 +32,12 @@ from bdr_csp.BeamDownReceiver import (
     TertiaryOpticalDevice,
 )
 
-
 DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
 DIR_DATA = r"C:\Users\david\OneDrive\academia-pega\2024_25-serc_postdoc\bdr_csp\data"
 
-#%% OBTAIN RESULTS FROM OPTICAL SIMULATION AND GENERATE RADIATION FLUX
-#########################################################
 def f_optim_fzv(X,*args):
     stime_i = time.time()
-    CSTi, TOD = args
+    CSTi, HSF, HB, TOD = args
     
     CST = CSTi.copy()
     Array, Cg, xrc, yrc, zrc, Arcv = [CST[x] for x in ['Array', 'Cg_TOD', 'xrc', 'yrc', 'zrc', 'Arcv']]
@@ -48,9 +45,9 @@ def f_optim_fzv(X,*args):
     fzv = X
     fzv = fzv/100. if fzv>1. else fzv
     CST['fzv'] = fzv
-    
+    HB.fzv = fzv
     #Running Optical-Thermal simulation
-    _, SF, CST = SPR.run_coupled_simulation(CST, TOD)
+    _, SF, CST = SPR.run_coupled_simulation(CSTi, HSF, HB, TOD)
     
     #Objective function and penalisations
     zf, fzv, Prcv, Arcv, N_hel, eta_rcv, P_rcv_sim, Qstg, Q_av, Q_max,T_p, C  = [
@@ -67,7 +64,7 @@ def f_optim_fzv(X,*args):
     fobj = C['LCOH']
     
     print('{:.4f}\t{:.4f}\t'.format(fobj,X)+ '\t'.join('{:.2f}'.format(x) for x in [
-        zf, Prcv, fzv, Arcv,
+        zf, Prcv, HB.fzv, TOD.receiver_area,
         time.time()-stime_i,
         N_hel, eta_SF, eta_rcv, P_rcv_sim,
         Qstg, Q_av, Q_max,T_p.max(),
@@ -83,13 +80,16 @@ def parametric_study(
     fldr_rslt = os.path.join(DIR_PROJECT, 'results_testing')
     tol = 1e-3
 
+    fzv = 0.82
     zf = 50.
     Qavg = 1.0
     Prcv = 20.
-    xrc, yrc, zrc = (0.,0.,0.)
+    xrc, yrc, zrc = (0.,0.,10.)
     geometry = "PB"
     array = "A"
     Cg = 2.0
+    Ah1 = 2.92**2
+    Npan = 1
 
     # Qavgs = np.array([1.00,0.75,0.50,1.25,1.50])
     # Prcvs = np.append(np.arange(20,41,5),np.arange(15,4,-5))
@@ -114,7 +114,7 @@ def parametric_study(
             CSTi = BDR.CST_BaseCase()
             CSTi['costs_in'] = SPR.get_plant_costs()         #Plant related costs
             CSTi['type_rcvr'] = 'HPR_0D'
-            CSTi['file_SF'] = os.path.join(
+            file_SF = os.path.join(
                 DIR_DATA,
                 'mcrt_datasets_final',
                 'Dataset_zf_{:.0f}'.format(zf)
@@ -124,35 +124,40 @@ def parametric_study(
                 'weather',
                 "Alice_Springs_Real2000_Created20130430.csv"
             )
-            CSTi['zf']    = zf
-            CSTi['Qavg']  = Qavg
+
+            CSTi['zf'] = zf
+            CSTi['Qavg'] = Qavg
             CSTi['P_rcv'] = Prcv
             Tp_avg = (CSTi['T_pC']+CSTi['T_pH'])/2
             CSTi['eta_rcv'] = SPR.HTM_0D_blackbox( Tp_avg, CSTi['Qavg'] )[0]
             Arcv = (CSTi['P_rcv']/CSTi['eta_rcv']) / CSTi['Qavg']
             CSTi['Arcv'] = Arcv
 
+            HSF = SolarField(zf=zf, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
+            HB = HyperboloidMirror(
+               zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=CSTi["eta_rfl"]
+            )
             TOD = TertiaryOpticalDevice(
                 params={"geometry":geometry, "array":array, "Cg":Cg, "Arcv":Arcv},
                 xrc=xrc, yrc=yrc, zrc=zrc,
             )
             CSTi['rO_TOD'] = TOD.radious_out
             
-            fzv = 0.82  #!TODO remove later
             # res = spo.minimize_scalar(
             #     f_optim_fzv,
             #     bracket = (75,84,97),
-            #     args = (CSTi,TOD),
+            #     args = (CSTi, HSF, HB, TOD),
             #     method = 'brent',
             #     tol = tol
             # )
             # fzv  = res.x/100
             
-            CSTi['zf']    = zf
-            CSTi['fzv']   = fzv
+            CSTi['zf'] = zf
+            CSTi['fzv'] = fzv
             CSTi['P_rcv'] = Prcv
-            
-            R2, SF, CSTo = SPR.run_coupled_simulation(CSTi, TOD)
+            CSTi['type_rcvr'] = 'HPR_2D'
+            R2, SF, CSTo = SPR.run_coupled_simulation(CSTi, HSF, HB, TOD)
+            print(CSTo)
             
             if save_detailed_results:
                 pickle.dump([CSTo,R2,SF,TOD],open(file_base_case,'wb'))
