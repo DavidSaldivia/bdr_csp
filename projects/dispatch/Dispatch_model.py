@@ -1,106 +1,72 @@
-# -*- coding: utf-8 -*-
 
-"""
-Created on Tue Mar 15 20:55:18 2022
-
-@author: z5158936
-"""
 import pandas as pd
 import numpy as np
-import xarray as xr
 import scipy.optimize as spo
 import matplotlib.pyplot as plt
 from matplotlib import cm
+import os
 import sys
 import time
-import os
 from os.path import isfile
-import pickle
-import cantera as ct
-from pvlib.location import Location
-import pvlib.solarposition as plsp
-
-from scipy.interpolate import interp1d, interp2d, interpn
-from scipy.interpolate import RectBivariateSpline
-from scipy.interpolate import RegularGridInterpolator as rgi
-from numba import jit, njit
+from scipy.interpolate import interp1d
 pd.set_option('display.max_columns', None)
 
-absFilePath = os.path.abspath(__file__)
-fileDir = os.path.dirname(os.path.abspath(__file__))
-mainDir = os.path.dirname(fileDir)
-newPath = os.path.join(mainDir, '2_Optic_Analysis')
-sys.path.append(newPath)
-import BeamDownReceiver as BDR
+import bdr_csp.PerformancePowerCycle as PPC
 
-newPath = os.path.join(mainDir, '5_SPR_Models')
-sys.path.append(newPath)
-import SolidParticleReceiver as SPR
-import PerformancePowerCycle as PPC
+DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
 
-#####################################################
-#%% DEFINING THE CONDITIONS OF THE PLANT
-#####################################################
+def get_data_location(location: int) -> tuple[float,float,str]:
+    if location == 1:       #Closest location to Mount Isa (example)
+        return (-20.7, 139.5, "QLD")
+        
+    elif location == 2:     #High-Radiation place in SA
+        return (-27.0, 135.5, "SA")
+    
+    elif location == 3:     #High-Radiation place in VIC
+        return (-34.5, 141.5, "VIC")
+        
+    elif location == 4:
+        return (-31.0, 142.0, "NSW")
+    
+    elif location == 5:
+        return (-25.0, 119.0, "SA")
 
-#Fixed values
+
+# Defining the conditions of the plant
+# Fixed values
+location = 2
 zf   = 50.
 Prcv = 19.
 Qavg = 1.25
 fzv  = 0.818161
 
-CSTo,R2,SF,TOD = PPC.Getting_BaseCase(zf,Prcv,Qavg,fzv)
-
+CSTo,R2,SF,TOD = PPC.getting_basecase(zf,Prcv,Qavg,fzv)
 Type = CSTo['Type']
 Tavg = (CSTo['T_pC']+CSTo['T_pH'])/2.
 T_amb_des = CSTo['T_amb'] - 273.15
 T_pb_max  = CSTo['T_pb_max'] - 273.15         #Maximum temperature in Power cycle
 DNI_min = 300.
+year = 2019
 
-location = 2
-if location == 1:       #Closest location to Mount Isa (example)
-    lat = -20.7
-    lon = 139.5
-    state = 'QLD'
-    year = 2019
-elif location == 2:     #High-Radiation place in SA
-    lat = -27.0
-    lon = 135.5
-    state = 'SA'
-    year = 2019
+lat,lon,state = get_data_location(location)
 
-elif location == 3:     #High-Radiation place in VIC
-    lat = -34.5
-    lon = 141.5
-    state = 'VIC'
-    year = 2019
-    
-elif location == 4:
-    lat = -31.0
-    lon = 142.0
-    state = 'NSW'
-    year = 2019
+# Getting the functions for hourly efficiencies
 
-# sys.exit()
-#####################################################
-#%% GETTING THE FUNCTIONS FOR HOURLY EFFICIENCIES
-#####################################################
-# Type = CSTo['Type']
-# file_ae = 'Preliminaries/1-Grid_AltAzi_{}.txt'.format(Type)
-# f_eta_opt = PPC.Eta_optical_SF(file_ae)
-# eta_SF_des = f_eta_opt(0,90.+lat)[0]
-# print(eta_SF_des)
-file_ae = 'Preliminaries/1-Grid_AltAzi_vF.csv'
-f_eta_opt = PPC.Eta_optical(file_ae, lbl='eta_SF')
+file_ae = os.path.join(
+    DIR_PROJECT, 'Preliminaries','1-Grid_AltAzi_vF.csv'
+)
+f_eta_opt = PPC.eta_optical(file_ae, lbl='eta_SF')
 eta_SF_des = f_eta_opt((lat,90.+lat,0)).item()
 print(eta_SF_des)
 
-file_PB = 'Preliminaries/sCO2_OD_lookuptable.csv'
-f_eta_pb = PPC.Eta_PowerBlock(file_PB)
-# eta_pb_des = f_eta_pb(T_amb_des, T_pb_max)[0]
+file_PB = os.path.join(
+    DIR_PROJECT, 'Preliminaries','sCO2_OD_lookuptable.csv'
+)
+f_eta_pb = PPC.eta_power_block(file_PB)
 eta_pb_des = f_eta_pb((T_pb_max,T_amb_des)).item()
 print(eta_pb_des)
 
-f_eta_TPR = PPC.Eta_TPR_0D(CSTo)
+f_eta_TPR = PPC.eta_TPR_0D(CSTo)
 eta_rcv_des = f_eta_TPR([Tavg,T_amb_des+273.15,CSTo['Qavg']])[0]
 print(eta_rcv_des)
 
@@ -136,11 +102,7 @@ print(eta_rcv_des)
 # sys.exit()
 
 
-####################################################
-
-#%% RUNNING THE SIMULATIONS
-
-#%%% SIMULATIONS FOR DIFFERENT STORAGE CAPACITY, SOLAR MULTIPLE, NUMBER OF TOWERS AND LOCATIONS
+# SIMULATIONS FOR DIFFERENT STORAGE CAPACITY, SOLAR MULTIPLE, NUMBER OF TOWERS AND LOCATIONS
 
 Ntower = 1
 location = 2
@@ -161,7 +123,11 @@ year_f = 2020
 loc_prev = 0
 
 res_tot = []
-cols = ['loc', 'Ntower', 'T_stg', 'SM', 'Prcv', 'P_el', 'Q_stg', 'CF_sf', 'CF_pb', 'Rev_tot', 'LCOH', 'LCOE', 'C_pb', 'C_C', 'RoI', 'PbP', 'NPV','Stg_min','date_sim']
+cols = ['loc', 'Ntower', 'T_stg', 'SM',
+        'Prcv', 'P_el', 'Q_stg', 'CF_sf', 
+        'CF_pb', 'Rev_tot', 'LCOH', 'LCOE', 
+        'C_pb', 'C_C', 'RoI', 'PbP', 
+        'NPV','Stg_min','date_sim']
 
 fldr_rslt = 'Results_SM_T_stg/'
 
@@ -175,38 +141,15 @@ if isfile(file_results):
 else:
     res_tot = pd.DataFrame([],columns=cols)
 
+
 for (location,Ntower) in [(location,Ntower) for location in locations for Ntower in Ntowers]:
     
-    if location == 1:       #Closest location to Mount Isa (example)
-        lat = -20.7
-        lon = 139.5
-        state = 'QLD'
-        
-    elif location == 2:     #High-Radiation place in SA
-        lat = -27.0
-        lon = 135.5
-        state = 'SA'
-    
-    elif location == 3:     #High-Radiation place in VIC
-        lat = -34.5
-        lon = 141.5
-        state = 'VIC'
-        
-    elif location == 4:
-        lat = -31.0
-        lon = 142.0
-        state = 'NSW'
-    
-    elif location == 5:
-        lat = -25.0
-        lon = 119.0
-        state = 'SA'
+    (lat,lon,state) = get_data_location(location)
     
     dT = 0.5            #Time in hours
-    # df = PPC.Generating_DataFrame_1year(lat,lon,state,year_i,dT)
     if location != loc_prev:
         print('Charging new dataset')
-        df_initial = PPC.Generating_DataFrame(lat,lon,state,year_i,year_f,dT)
+        df_initial = PPC.generating_df_aus(lat,lon,state,year_i,year_f,dT)
         loc_prev = location
     
     df = df_initial.copy()
@@ -216,7 +159,7 @@ for (location,Ntower) in [(location,Ntower) for location in locations for Ntower
     
     for (T_stg,SM) in [(T_stg,SM) for T_stg in T_stgs for SM in SMs]:
         
-        CSTo,R2,SF,TOD = PPC.Getting_BaseCase(zf,Prcv,Qavg,fzv)
+        CSTo,R2,SF,TOD = PPC.getting_basecase(zf,Prcv,Qavg,fzv)
         CSTo['eta_pb']  = eta_pb_des
         CSTo['eta_rcv'] = eta_rcv_des
         
@@ -226,10 +169,9 @@ for (location,Ntower) in [(location,Ntower) for location in locations for Ntower
         CSTo['lat']    = lat
         CSTo['lng']    = lon
         
-        CSTo['Costs_i']['Fr_pb'] = Fr_pb
-        CSTo['Costs_i']['C_pb_est'] = cost_pb
+        CSTo['costs_in']['Fr_pb'] = Fr_pb
+        CSTo['costs_in']['C_pb_est'] = cost_pb
 
-        ####################################################
         #Design power block efficiency and capacity
         Prcv   = CSTo['P_rcv']
         P_pb   = Prcv / SM          #[MW] Design value for Power from receiver to power block
@@ -239,10 +181,9 @@ for (location,Ntower) in [(location,Ntower) for location in locations for Ntower
         CSTo['P_el']  = P_el
         CSTo['Q_stg'] = Q_stg
         
-        ####################################################
         # Annual performance
         args = (f_eta_opt, f_eta_TPR, f_eta_pb, dT, DNI_min)
-        aux = PPC.Annual_Performance(df,CSTo,SF,args)
+        aux = PPC.annual_performance(df,CSTo,SF,args)
         CF_sf,CF_pb,Rev_tot,Rev_day,LCOH,LCOE,C_pb,C_C,RoI,PbP,NPV,Stg_min = [aux[x] for x in ['CF_sf', 'CF_pb', 'Rev_tot', 'Rev_day', 'LCOH', 'LCOE','C_pb','C_C','RoI','PbP','NPV','Stg_min']]
         
         date_sim = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime())
@@ -252,7 +193,7 @@ for (location,Ntower) in [(location,Ntower) for location in locations for Ntower
         # sys.exit()
         res = pd.DataFrame(data,columns=cols)
     
-    print(location,df.DNI.sum()/(365*5+1)/2,df.DNI.mean()*48)
+    print(location,df["DNI"].sum()/(365*5+1)/2,df["DNI"].mean()*48)
     
     res_tot = pd.concat([res_tot,res],ignore_index=True)
     # res_tot.to_csv(file_results)
@@ -262,8 +203,8 @@ for (location,Ntower) in [(location,Ntower) for location in locations for Ntower
     fig, ax1 = plt.subplots(figsize=(9,6))
     fs = 18
     for T_stg in res.T_stg.unique():
-        res2 = res[res.T_stg==T_stg]
-        ax1.plot(res2.SM,res2.LCOE,lw=3,marker='o',label=r'$T_{{stg}}={:.0f}$hr'.format(T_stg))
+        res2 = res[res["T_stg"]==T_stg]
+        ax1.plot(res2["SM"],res2["LCOE"],lw=3,marker='o',label=r'$T_{{stg}}={:.0f}$hr'.format(T_stg))
     ax1.set_ylabel('LCOE [AUD/MWh]',fontsize=fs)
     ax1.set_xlabel('Solar Multiple [-]',fontsize=fs)
     ax1.tick_params(axis='both', which='major', labelsize=fs-2)
@@ -436,9 +377,9 @@ for (location,Ntower) in [(location,Ntower) for location in locations for Ntower
     plt.show()
     
 sys.exit()
-#%%% SIMULATIONS FOR POWER BLOCK COSTS
-import PerformancePowerCycle as PPC
 
+
+# SIMULATIONS FOR POWER BLOCK COSTS
 
 
 Ntower = 1

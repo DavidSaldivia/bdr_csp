@@ -546,8 +546,8 @@ class TertiaryOpticalDevice():
             rO,rA = params['rO'], params['rO']
         
         ## Creating the object
-        self.radious_ap = rA
-        self.radious_out = rO
+        self.radius_ap = rA
+        self.radius_out = rO
         self.height = H
         self.Cg = Cg
         self.surface_area = S_TOD
@@ -598,7 +598,7 @@ class TertiaryOpticalDevice():
         """
         
         V_TOD = self.n_sides
-        rA = self.radious_ap
+        rA = self.radius_ap
         xrc = self.xrc
         yrc = self.yrc
 
@@ -665,7 +665,7 @@ class TertiaryOpticalDevice():
     def limits(self) -> tuple[float,float,float,float]:
         xCA, yCA = [],[]
         for i in range(self.n_tods):
-            xA, yA = self.perimeter_points(self.radious_ap, tod_index=i)
+            xA, yA = self.perimeter_points(self.radius_ap, tod_index=i)
             xCA.append(xA)
             yCA.append(yA)
         xCA=np.array(xCA)
@@ -706,8 +706,8 @@ class TertiaryOpticalDevice():
         N_TOD = self.n_tods
         V_TOD = self.n_sides
         H_TOD = self.height
-        rA = self.radious_ap
-        rO = self.radious_out
+        rA = self.radius_ap
+        rO = self.radius_out
         x0 = self.x0
         y0 = self.y0
         zmin = self.zmin

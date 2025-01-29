@@ -23,13 +23,7 @@ from bdr_csp.BeamDownReceiver import (
     TertiaryOpticalDevice
 )
 
-#######################################
-#%% HEAT TRANSFER CORRELATIONS
 
-######################################################
-#%% HORIZONTAL PARTICLE RECEIVER (HPR)
-######################################################
-#############################################
 def HTM_0D_blackbox(
         Tp: float,
         qi: float,
@@ -409,7 +403,7 @@ class HPR2D():
     x_top: float | None = None
 
     def get_dimensions(self, TOD: TertiaryOpticalDevice, tod_index: int = 0) -> None:
-        xO,yO = TOD.perimeter_points(TOD.radious_out, tod_index=tod_index)
+        xO,yO = TOD.perimeter_points(TOD.radius_out, tod_index=tod_index)
         self.x_fin = xO.min()
         self.x_ini = xO.max()
         self.y_bot = yO.min()
@@ -441,7 +435,7 @@ class HPR2D():
         heat_flux_avg = self.heat_flux_avg
 
         #Parameters for receiver
-        xO,yO = TOD.perimeter_points(TOD.radious_out, tod_index=polygon_i-1)
+        xO,yO = TOD.perimeter_points(TOD.radius_out, tod_index=polygon_i-1)
         lims = xO.min(), xO.max(), yO.min(), yO.max()
         x_fin = lims[0]
         x_ini = lims[1]
@@ -656,126 +650,6 @@ def rcvr_HPR_0D_simple(CST, SF, Fc=2.57, air=ct.Solution('air.yaml')):
     }
     return rcvr_output
 
-def rcvr_HPR_2D(CST, SF, R2):
-    
-    polygon_i= 1
-    F_c  = 5.
-    Tamb = 300
-    air  = ct.Solution('air.yaml')
-    Ny   = 100
-    T_in, T_out, tz, TSM, Prcv, Arcv   = [CST[x] for x in ['T_pC', 'T_pH', 'tz', 'TSM', 'P_rcv', 'Arcv']]
-    Type, Array, rO, Cg, zrc = [CST[x] for x in ['Type', 'Array','rO_TOD','Cg_TOD','zrc']]
-
-    #Particles characteristics
-    if CST['TSM'] == 'CARBO':
-        ab_p = 0.91    
-        em_p = 0.75
-        rho_b = 1810
-        
-    data_eta=[]
-    for (Tp,qi) in [(Tp,qi) for Tp in np.arange(700,2001,100) for qi in np.arange(0.25,4.1,0.5)]:
-        air.TP = (Tp+Tamb)/2., ct.one_atm
-        Tsky = Tamb-15
-        hcov = F_c * htc.h_conv_Holman(Tp, Tamb, 5.0, air)
-        hrad = em_p*5.67e-8*(Tp**4-Tsky**4)/(Tp-Tamb)
-        hrc  = hcov + hrad
-        qloss = hrc * (Tp - Tamb)
-        eta_th = (qi*1e6*ab_p - qloss)/(qi*1e6)
-        data_eta.append( [Tp,qi,hcov,hrad,qloss,eta_th])    
-    df_eta = pd.DataFrame(data_eta,columns=['Tp','qi','hcov', 'hrad', 'qloss', 'eta'])
-    f_eta= spi.interp2d(df_eta['Tp'],df_eta['qi'],df_eta['eta'])     #Function to interpolate
-    
-    #Initial guess for number of heliostats
-    Q_av = 1.0      #
-    T_av = (T_in+T_out)/2
-    eta_rcv = f_eta(T_av, Q_av)[0]
-    P_SF  = Prcv / eta_rcv
-    Q_acc = SF['Q_h1'].cumsum()
-    N_hel = len( Q_acc[ Q_acc < P_SF ] ) + 1
-        
-    R2a = R2[(R2["hit_rcv"])&(R2["Npolygon"]==polygon_i)].copy()  #Rays into 1 receiver
-    R2b = R2[R2["hit_rcv"]].copy()                               #Total Rays into receivers
-    # N_hel = len(SF)
-    it_max = 20;
-    it = 1; loop=0;
-    data = []; N_hels = []
-    while it<it_max:
-        
-        hlst    = SF.iloc[:N_hel].index
-        SF2     = SF.loc[hlst]
-        Etas2   = SF2.mean()
-        P_SF2   = SF2.Q_pen.sum()
-        eta_SF2 = Etas2['Eta_SF']
-        
-        Nx = 50; Ny = 50
-        TOD = BDR.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},0.,0.,zrc)
-        N_TOD,V_TOD,H_TOD,rO,rA,x0,y0,Arcv = [TOD[x] for x in ['N', 'V', 'H', 'rO', 'rA', 'x0', 'y0', 'A_rcv']]
-        out   = R2a[R2a.hel.isin(hlst)].copy()
-        r_cpc = len(out)/len(R2b[R2b.hel.isin(hlst)])      #Fraction of rays that goes into one TOD
-        
-        xO,yO = BDR.TOD_XY_R(rO,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)    
-        xmin,xmax,ymin,ymax = xO.min(), xO.max(), yO.min(), yO.max()
-        
-        dx = (xmax-xmin)/Nx; dy = (ymax-ymin)/Nx; dA=dx*dy
-        Nrays = len(out)
-        Fbin    = r_cpc * Etas2['Eta_SF'] * (CST['Gbn']*CST['A_h1']*N_hel)/(1e3*dA*Nrays)
-        Q_rc1,X_rc1, Y_rc1 = np.histogram2d(out['xr'],out['yr'],bins=[Nx,Ny],range=[[xmin, xmax], [ymin, ymax]], density=False)
-        Q_rc1 = Fbin * Q_rc1
-        Q_max = Q_rc1.max()/1000.
-        f_Qrc1= spi.RectBivariateSpline(X_rc1[:-1],Y_rc1[:-1],Q_rc1)     #Function to interpolate
-        P_rc1 = sum(sum(Q_rc1))*dA/1000.        #[MWth]
-        Q_av = P_SF2 / Arcv
-        
-        Tav = 0.5*(T_in+T_out)  #Estimating Initial guess for residence time
-        # cp = 365*(Tav+273.15)**0.18
-        cp = 148*Tav**0.3093
-        eta_rcv_g = f_eta(Tav,Q_av)[0]
-        t_res_g = rho_b * cp * tz * (T_out - T_in ) / (eta_rcv_g * Q_av*1e6)
-        
-        def F_Toutavg(t_res_g,*args):
-            CST_a,cpc,f_Qrc1,f_eta = args
-            CST_a['t_res'] = t_res_g[0]
-            T_p, Qstg1, M_stg1 = HTM_2D_moving_particles(CST_a,TOD,cpc,f_Qrc1,f_eta)
-            return T_p.mean()-T_out
-        
-        args = (CST,polygon_i,f_Qrc1,f_eta)
-        sol  = spo.fsolve(F_Toutavg,t_res_g,args=args,full_output=True)
-        t_res = sol[0][0]
-        n_evals = sol[1]['nfev']
-        CST['t_res'] = t_res
-        
-        A_rc1  = Arcv/N_TOD
-        xavg   = A_rc1/(ymax-ymin)
-        P_vel  = xavg/t_res                #Belt velocity magnitud
-        t_sim  = (xmax-xmin)/P_vel           #Simulation [s]
-        
-        inputs = xmin,xmax,ymin,ymax,P_vel,t_sim,tz,T_in
-        T_p,Qstg1,Mstg1 = HTM_2D_moving_particles(inputs,f_Qrc1,f_eta)
-        
-        eta_rcv = Qstg1/P_rc1
-        Qstg = Qstg1 / r_cpc
-        Mstg = Mstg1 / r_cpc
-        Q_av = P_SF2 / Arcv
-        
-        P_SF  = Prcv / eta_rcv
-        Q_acc = SF['Q_h1'].cumsum()
-        N_new = len( Q_acc[ Q_acc < P_SF ] ) + 1
-        
-        N_hels.append(N_new)
-        data.append([Arcv, N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, eta_SF2, Mstg, t_res, n_evals ])
-        # print('\t'.join('{:.3f}'.format(x) for x in data[-1]))
-        if N_new == N_hel:
-            break
-        if abs(N_new-N_hel) == 1:
-            loop+=1
-        if loop==3:
-            N_hel = max(N_hel,N_new)
-            break
-        N_hel = N_new
-        it+=1
-    
-    return T_p, [ N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, Mstg, t_res ]
-
 
 def rcvr_HPR_2D_simple(
         CST: dict,
@@ -797,7 +671,7 @@ def rcvr_HPR_2D_simple(
     ]
 
     #Parameters for receiver
-    xO,yO = TOD.perimeter_points(TOD.radious_out, tod_index=polygon_i-1)
+    xO,yO = TOD.perimeter_points(TOD.radius_out, tod_index=polygon_i-1)
     lims = xO.min(), xO.max(), yO.min(), yO.max()
     x_fin = lims[0]
     x_ini = lims[1]
@@ -1240,14 +1114,15 @@ def rcvr_TPR_0D(CST):
     P_SF = Prcv / eta_rcv
     Ltot  = Arcv/(y_top-y_bot)
     vel_p = Ltot / t_res
+
     return [eta_rcv, P_SF, Tp_avg, t_res, M_p, Arcv, vel_p]
 
 
 def rcvr_TPR_0D_corr(
         CST: dict,
         TOD: TertiaryOpticalDevice,
-        SF: pd.DataFrame
-    ):
+        SF: pd.DataFrame | None = None
+    ) -> ReceiverOutput:
     abs_p = 0.91
     em_p  = 0.85
     em_w  = 0.20
@@ -1260,7 +1135,7 @@ def rcvr_TPR_0D_corr(
     beta  = -27.
     tz    = 0.06
     
-    xO,yO = TOD.perimeter_points(TOD.radious_out, tod_index=0)
+    xO,yO = TOD.perimeter_points(TOD.radius_out, tod_index=0)
     Arcv = TOD.receiver_area
     x_fin,x_ini = xO.min(),xO.max()
     y_bot,y_top = yO.min(),yO.max()
@@ -1290,11 +1165,15 @@ def rcvr_TPR_0D_corr(
     n = 0.2466
     eta_rcv_corr = eta_rcv*m+n
 
-    Q_acc    = SF['Q_h1'].cumsum()
+    if SF is None:
+        n_hels = np.nan
+    else:
+        Q_acc = SF['Q_h1'].cumsum()
+        n_hels = len( Q_acc[ Q_acc < P_bdr ] ) + 1
 
     rcvr_output = {
         "temps_parts" : np.array([Tp_avg]),
-        "n_hels" : len( Q_acc[ Q_acc < P_bdr ] ) + 1,
+        "n_hels" : n_hels,
         "rad_flux_max" : np.nan,            #No calculated
         "rad_flux_avg" : P_bdr/Arcv,
         "heat_stored": np.nan,            #No calculated
@@ -1628,7 +1507,7 @@ def get_plant_costs():
 ######################################
 def BDR_cost(SF,CST):
     
-    zf,fzv,rmin,rmax,zmax,P_SF,eta_rc,Type,Array,rO,Cg,xrc,yrc,zrc,A_h1, S_HB = [CST[x] for x in ['zf', 'fzv', 'rmin', 'rmax', 'zmax', 'P_SF', 'eta_rcv', 'Type', 'Array', 'rO_TOD', 'Cg_TOD', 'xrc', 'yrc', 'zrc', 'A_h1', 'S_HB']]
+    zmax,zrc,A_h1, S_HB = [CST[x] for x in ['zmax', 'zrc', 'A_h1', 'S_HB']]
     
     T_stg   = CST['T_stg']                   # hr storage
     SM      = CST['SM']                   # (-) Solar multiple (P_rcv/P_pb)
@@ -1843,22 +1722,22 @@ def BDR_cost(SF,CST):
 
 def initial_eta_rcv(CSTi):
     Tp_avg = (CSTi['T_pC']+CSTi['T_pH'])/2
-    Type  = CSTi['Type']
-    Array = CSTi['Array']
+    geometry  = CSTi['Type']
+    array = CSTi['Array']
+    Cg = CSTi["Cg_TOD"]
+    xrc, yrc, zrc = (CSTi["xrc"],CSTi["yrc"],CSTi["zrc"])
+
     eta_rcv1 = HTM_0D_blackbox(Tp_avg,CSTi['Qavg'])[0]
     Arcv = (CSTi['P_rcv']/eta_rcv1) / CSTi['Qavg']
-    N_TOD,V_TOD = BDR.TOD_Array(Array)
-    CSTi['Arcv'] = Arcv
-    CSTi['rO_TOD'] = (Arcv/(V_TOD*N_TOD*np.tan(np.pi/V_TOD)))**0.5
-    eta_rcv_0D = rcvr_TPR_0D(CSTi)[0]
-    m = 0.6895          #Correcting 0D model with linear fit
-    n = 0.2466
-    eta_rcv_i = eta_rcv_0D*m+n
-    Arcv = (CSTi['P_rcv']/eta_rcv_i) / CSTi['Qavg']
-    N_TOD,V_TOD = BDR.TOD_Array(CSTi['Array'])
-    rO_TOD = (Arcv / ( V_TOD*N_TOD*np.tan(np.pi/V_TOD) ) )**0.5
+    TOD = BDR.TertiaryOpticalDevice(
+            params={"geometry":geometry, "array":array, "Cg":Cg, "Arcv":Arcv},
+            xrc=xrc, yrc=yrc, zrc=zrc,
+        )
+    CSTi['rO_TOD'] = TOD.radius_out
+    results = rcvr_TPR_0D_corr(CSTi, TOD)
+    eta_rcv = results["eta_rcv"]
 
-    return eta_rcv_i, Arcv, rO_TOD
+    return eta_rcv, Arcv, TOD.radius_out
 
 ##################################
 

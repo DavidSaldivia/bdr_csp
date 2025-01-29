@@ -6,15 +6,8 @@ Created on Mon Oct 17 19:33:51 2022
 """
 import pandas as pd
 import numpy as np
-import scipy.sparse as sps
-import scipy.optimize as spo
-from scipy.integrate import quad
 import scipy.interpolate as spi
-from scipy import constants as cte
 
-from scipy.sparse.linalg import LinearOperator, spilu
-
-import cantera as ct
 import matplotlib.pyplot as plt
 from matplotlib import cm
 import matplotlib.patches as patches
@@ -31,9 +24,10 @@ from bdr_csp.BeamDownReceiver import (
     HyperboloidMirror,
     TertiaryOpticalDevice,
 )
+from bdr_csp.dir import DIRECTORY
 
 DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
-DIR_DATA = r"C:\Users\david\OneDrive\academia-pega\2024_25-serc_postdoc\bdr_csp\data"
+DIR_DATA = DIRECTORY.DIR_DATA
 
 def f_optim_fzv(X,*args):
     stime_i = time.time()
@@ -44,15 +38,15 @@ def f_optim_fzv(X,*args):
 
     fzv = X
     fzv = fzv/100. if fzv>1. else fzv
-    CST['fzv'] = fzv
     HB.fzv = fzv
-    #Running Optical-Thermal simulation
+
+    #Running optical-thermal simulation
     _, SF, CST = SPR.run_coupled_simulation(CSTi, HSF, HB, TOD)
     
     #Objective function and penalisations
-    zf, fzv, Prcv, Arcv, N_hel, eta_rcv, P_rcv_sim, Qstg, Q_av, Q_max,T_p, C  = [
+    zf, Prcv, N_hel, eta_rcv, P_rcv_sim, Qstg, Q_av, Q_max,T_p, C  = [
         CST[x] for x in [
-            'zf','fzv','P_rcv','Arcv',
+            'zf','P_rcv',
             'N_hel', 'eta_rcv', 'P_rcv_sim',
             'Q_stg', 'Q_av', 'Q_max',
             'T_p', 'Costs'
@@ -141,7 +135,7 @@ def parametric_study(
                 params={"geometry":geometry, "array":array, "Cg":Cg, "Arcv":Arcv},
                 xrc=xrc, yrc=yrc, zrc=zrc,
             )
-            CSTi['rO_TOD'] = TOD.radious_out
+            # CSTi['rO_TOD'] = TOD.radius_out
             
             # res = spo.minimize_scalar(
             #     f_optim_fzv,
@@ -152,9 +146,9 @@ def parametric_study(
             # )
             # fzv  = res.x/100
             
-            CSTi['zf'] = zf
-            CSTi['fzv'] = fzv
-            CSTi['P_rcv'] = Prcv
+            # CSTi['zf'] = zf
+            # CSTi['fzv'] = fzv
+            # CSTi['P_rcv'] = Prcv
             CSTi['type_rcvr'] = 'HPR_2D'
             R2, SF, CSTo = SPR.run_coupled_simulation(CSTi, HSF, HB, TOD)
             print(CSTo)
@@ -246,10 +240,10 @@ def plotting_detailed_results(
         cb.ax.tick_params(labelsize=f_s-2)
         
         polygon_i=1
-        xO,yO = TOD.perimeter_points(TOD.radious_out, tod_index=polygon_i-1)
+        xO,yO = TOD.perimeter_points(TOD.radius_out, tod_index=polygon_i-1)
         lims = xO.min(), xO.max(), yO.min(), yO.max()
 
-        # xA,yA = TOD.perimeter_points(TOD.radious_ap, tod_index=polygon_i-1)
+        # xA,yA = TOD.perimeter_points(TOD.radius_ap, tod_index=polygon_i-1)
         # lp = len(xA)//2
         # fyO = spi.CubicSpline(xO[:lp],yO[:lp],extrapolate=True)
         # yO2 = np.interp(xA[:lp],xO[:lp],yO[:lp])
@@ -259,7 +253,7 @@ def plotting_detailed_results(
         
         x0f = TOD.x0[polygon_i-1]
         y0f = TOD.y0[polygon_i-1]
-        radius = TOD.radious_out/np.cos(np.pi/TOD.n_sides)
+        radius = TOD.radius_out/np.cos(np.pi/TOD.n_sides)
         ax.add_artist(patches.RegularPolygon(
             (x0f,y0f),
             TOD.n_sides,
@@ -267,7 +261,7 @@ def plotting_detailed_results(
             orientation=np.pi/TOD.n_sides,
             zorder=10, color='black', fill=None
         ))
-        radius = TOD.radious_ap/np.cos(np.pi/TOD.n_sides)
+        radius = TOD.radius_ap/np.cos(np.pi/TOD.n_sides)
         ax.add_artist(patches.RegularPolygon(
             (x0f,y0f),
             TOD.n_sides,
