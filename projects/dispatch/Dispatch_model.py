@@ -77,9 +77,9 @@ print(eta_rcv_des)
     
 #     T_turb  = T_hot - 50.    #(C)
 #     T_p     = T_hot + 273.15 #(K)
-#     Tamb    = T_amb + 273.15 #(K)
-#     eta_th = f_eta_HPR2([T_p,Tamb,qi])[0]
-#     eta_pb = f_eta_pb(T_amb,T_turb)[0]
+#     Tamb    = T_amb_des + 273.15 #(K)
+#     eta_th = f_eta_TPR([T_p,Tamb,qi])[0]
+#     eta_pb = f_eta_pb([T_amb_des,T_turb])[0]
 #     eta_overall = eta_SF_des * eta_th * eta_pb
 #     df.append([T_hot,qi,eta_th,eta_pb,eta_overall])
 #     print(df[-1])
@@ -89,8 +89,8 @@ print(eta_rcv_des)
 # fig, ax1 = plt.subplots(figsize=(9,6))
 # fs = 18
 # for qi in qis:
-#     df2 = df[df.qi==qi]
-#     ax1.plot(df2.T_hot,df2.eta_overall,lw=3,label=r'$q_{{rcv}}={:.2f}[MW/m^2]$'.format(qi))
+#     df2 = df[df["qi"]==qi]
+#     ax1.plot(df2["T_hot"],df2["eta_overall"],lw=3,label=r'$q_{{rcv}}={:.2f}[MW/m^2]$'.format(qi))
 #     # ax1.scatter(df2.T_hot,df2.eta_pb,s=10,label=r'$q_{{rcv}}={:.2f}[MW/m^2]$'.format(qi))
 # ax1.set_ylabel('Overall efficiency [-]',fontsize=fs)
 # ax1.set_xlabel('Particle temperature [C]',fontsize=fs)
@@ -111,7 +111,7 @@ Ntowers = [1,2,3,4]
 locations = [1,2,3,4]
 T_stgs = np.arange(4,16.1,2)
 SMs     = np.arange(1.0,4,0.125)
-
+dir_cases = os.path.join(DIR_PROJECT, "cases")
 # Ntowers = [1]
 # # locations = [2]
 # T_stgs = [8]
@@ -159,7 +159,11 @@ for (location,Ntower) in [(location,Ntower) for location in locations for Ntower
     
     for (T_stg,SM) in [(T_stg,SM) for T_stg in T_stgs for SM in SMs]:
         
-        CSTo,R2,SF,TOD = PPC.getting_basecase(zf,Prcv,Qavg,fzv)
+        CSTo,R2,SF,TOD = PPC.getting_basecase(
+            zf,Prcv,Qavg,fzv,
+            save_detailed_results=True,
+            dir_cases=dir_cases
+        )
         CSTo['eta_pb']  = eta_pb_des
         CSTo['eta_rcv'] = eta_rcv_des
         
@@ -192,8 +196,12 @@ for (location,Ntower) in [(location,Ntower) for location in locations for Ntower
         
         # sys.exit()
         res = pd.DataFrame(data,columns=cols)
-    
-    print(location,df["DNI"].sum()/(365*5+1)/2,df["DNI"].mean()*48)
+        
+        plant.weather = df["DNI"].sum()/(365*5+1)/2
+    print(
+        plant.location,
+        plant.weather.accumulated("dni").value,df["DNI"].mean()*48
+        )
     
     res_tot = pd.concat([res_tot,res],ignore_index=True)
     # res_tot.to_csv(file_results)
@@ -219,12 +227,12 @@ for (location,Ntower) in [(location,Ntower) for location in locations for Ntower
     ax2.tick_params(axis='both', which='major', labelsize=fs-2)
     
     ax2.plot([1.0,4.0],[95.6,95.6],lw=3,ls='-.',c='gray')
-    ax2.annotate('SAM sim.',(3.5,97.0),c='gray',rotation='0',fontsize=fs-4)
+    ax2.annotate('SAM sim.',(3.5,97.0),c='gray',rotation=0,fontsize=fs-4)
     
     SP_avg = {'QLD':71.50, 'SA':85.6, 'VIC': 78.24, 'NSW': 76.29}
     
     ax1.plot([1.0,4.0],[SP_avg[state],SP_avg[state]],lw=3,ls='--',c='gray')
-    ax1.annotate('SP avg.',(3.5,SP_avg[state]+1.5),c='gray',rotation='0',fontsize=fs-4)
+    ax1.annotate('SP avg.',(3.5,SP_avg[state]+1.5),c='gray',rotation=0,fontsize=fs-4)
     
     
     fig.savefig(fldr_rslt+'{}_{:.2f}_{}_Ntower_{:0d}_SM_LCOE.png'.format(cost_pb,Fr_pb,state,Ntower), bbox_inches='tight')

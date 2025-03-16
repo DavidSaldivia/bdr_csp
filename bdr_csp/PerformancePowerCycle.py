@@ -75,7 +75,8 @@ def getting_basecase(
         Prcv: float,
         Qavg: float,
         fzv: float,
-        save_detailed_results: bool = False
+        save_detailed_results: bool = False,
+        dir_cases: str = ""
     ) -> tuple[dict,pd.DataFrame, pd.DataFrame, BDR.TertiaryOpticalDevice]:
 
     # constants
@@ -89,10 +90,9 @@ def getting_basecase(
     # checking if the file existed
     case = 'case_zf{:.0f}_Q_avg{:.2f}_Prcv{:.1f}'.format(zf, Qavg, Prcv)
     # print(case)
-    file_base_case = 'cases/'+case+'.plk'
+    file_base_case = os.path.join(dir_cases,f'{case}.plk')
     
     if isfile(file_base_case):
-    # if False:
         [CSTo,R2,SF,TOD] = pickle.load(open(file_base_case,'rb'))
     
     else:
