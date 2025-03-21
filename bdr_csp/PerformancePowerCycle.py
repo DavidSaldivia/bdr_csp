@@ -25,7 +25,7 @@ absFilePath = os.path.abspath(__file__)
 fileDir = os.path.dirname(os.path.abspath(__file__))
 DIR_MAIN = os.path.dirname(fileDir)
 
-import bdr_csp.BeamDownReceiver as BDR
+import bdr_csp.bdr as bdr
 import bdr_csp.SolidParticleReceiver as SPR
 from bdr_csp.dir import DIRECTORY
 
@@ -43,13 +43,13 @@ def Getting_BaseCase(zf,Prcv,Qavg,fzv):
         [CSTo,R2,SF,TOD] = pickle.load(open(file_BaseCase,'rb'))
     else:
         
-        CSTi = BDR.CST_BaseCase()
+        CSTi = bdr.CST_BaseCase()
         Costs = SPR.get_plant_costs()
         CSTi['Costs_i'] = Costs
     
         fldr_data = os.path.join(DIR_MAIN, '0_Data\MCRT_Datasets_Final')
         CSTi['file_SF'] = os.path.join(fldr_data,'Dataset_zf_{:.0f}'.format(zf))
-        CSTi['file_weather'] = 'Preliminaries/Alice_Springs_Real2000_Created20130430.csv'
+        CSTi['file_weather'] = os.path.join('Preliminaries','Alice_Springs_Real2000_Created20130430.csv')
         CSTi['zf']    = zf
         CSTi['fzv']   = fzv
         CSTi['Qavg']  = Qavg
@@ -65,7 +65,7 @@ def Getting_BaseCase(zf,Prcv,Qavg,fzv):
         R2, SF, CSTo = SPR.Simulation_Coupled(CSTi)
         
         zf,Type,Array,rO,Cg,xrc,yrc,zrc,Npan = [CSTo[x] for x in ['zf', 'Type', 'Array', 'rO_TOD', 'Cg_TOD', 'xrc', 'yrc', 'zrc', 'N_pan']]
-        TOD = BDR.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},xrc,yrc,zrc)
+        TOD = bdr.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},xrc,yrc,zrc)
         
         pickle.dump([CSTo,R2,SF,TOD],open(file_BaseCase,'wb'))
     return CSTo,R2,SF,TOD
@@ -77,7 +77,7 @@ def getting_basecase(
         fzv: float,
         save_detailed_results: bool = False,
         dir_cases: str = ""
-    ) -> tuple[dict,pd.DataFrame, pd.DataFrame, BDR.TertiaryOpticalDevice]:
+    ) -> tuple[dict,pd.DataFrame, pd.DataFrame, bdr.TertiaryOpticalDevice]:
 
     # constants
     xrc, yrc, zrc = (0.,0.,10.)
@@ -97,7 +97,7 @@ def getting_basecase(
     
     else:
         
-        CSTi = BDR.CST_BaseCase()
+        CSTi = bdr.CST_BaseCase()
         CSTi['costs_in'] = SPR.get_plant_costs()         #Plant related costs
         CSTi['type_rcvr'] = 'HPR_0D'
         file_SF = os.path.join(
@@ -119,11 +119,12 @@ def getting_basecase(
         Arcv = (CSTi['P_rcv']/CSTi['eta_rcv']) / CSTi['Qavg']
         CSTi['Arcv'] = Arcv
 
-        HSF = BDR.SolarField(zf=zf, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
-        HB = BDR.HyperboloidMirror(
+        HSF = bdr.SolarField(zf=zf, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
+        HB = bdr.HyperboloidMirror(
             zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=CSTi["eta_rfl"]
         )
-        TOD = BDR.TertiaryOpticalDevice(
+        TOD = bdr.TertiaryOpticalDevice(
+            geometry = geometry
             params={"geometry":geometry, "array":array, "Cg":Cg, "Arcv":Arcv},
             xrc=xrc, yrc=yrc, zrc=zrc,
         )

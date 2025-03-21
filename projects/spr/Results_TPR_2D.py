@@ -18,7 +18,7 @@ import pickle
 import time
 import sys
 
-from bdr_csp import BeamDownReceiver as BDR
+from bdr_csp import bdr as BDR
 from bdr_csp import SolidParticleReceiver as SPR
 
 # OBTAIN RESULTS FROM OPTICAL SIMULATION AND GENERATE RADIATION FLUX

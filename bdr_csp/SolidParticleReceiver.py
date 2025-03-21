@@ -16,10 +16,10 @@ import cantera as ct
 import scipy.optimize as spo
 import scipy.interpolate as spi
 
-from bdr_csp import BeamDownReceiver as BDR
+from bdr_csp import bdr as BDR
 from bdr_csp import htc
 
-from bdr_csp.BeamDownReceiver import (
+from bdr_csp.bdr import (
     TertiaryOpticalDevice
 )
 
@@ -1465,7 +1465,7 @@ def TPR_2D_model(
     
     return results, T_p, Rcvr, Rcvr_full
 
-# COUPLED FUNCTIONS
+#---------------------
 def get_plant_costs():
     Ci = {}
     Ci['R_ftl']  = 1.3                   # Field to land ratio, SolarPilot
@@ -1504,7 +1504,7 @@ def get_plant_costs():
     
     return Ci
 
-######################################
+#---------------------
 def BDR_cost(SF,CST):
     
     zmax,zrc,A_h1, S_HB = [CST[x] for x in ['zmax', 'zrc', 'A_h1', 'S_HB']]
@@ -1741,7 +1741,7 @@ def initial_eta_rcv(CSTi):
 
 ##################################
 
-from bdr_csp.BeamDownReceiver import (
+from bdr_csp.bdr import (
     SolarField,
     HyperboloidMirror,
     TertiaryOpticalDevice

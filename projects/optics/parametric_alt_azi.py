@@ -15,7 +15,7 @@ import cantera as ct
 from matplotlib import cm
 import matplotlib.patches as patches
 
-from bdr_csp import BeamDownReceiver as BDR
+from bdr_csp import bdr as BDR
 import bdr_csp.AntuPy as AP
 
 

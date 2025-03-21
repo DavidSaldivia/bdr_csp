@@ -1,2 +1,1 @@
 Pel	zf	fzv	Cg	geometry	array	eta_cos	eta_blk	eta_att	eta_hbi	eta_tdi	eta_tdr	eta_TOD	eta_BDR	eta_SF	Pel_real	N_hel	S_hel	S_HB	S_TOD	H_TOD	rO	Q_max	status
-10.000	50.000	0.830	2.000	PB	A	0.7968	0.9848	0.9749	0.9494	0.9954	0.9598	0.9554	0.8622	0.6277	10.00	5523.00	47091.31	962.42	323.07	5.40	2.32	1210.12	OK

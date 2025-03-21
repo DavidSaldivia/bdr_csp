@@ -11,13 +11,12 @@ from scipy.optimize import fsolve
 import matplotlib.pyplot as plt
 from matplotlib import cm
 import matplotlib.patches as patches
-from importlib import reload
-import gc
 import os
-import sys
-import bdr_csp.BeamDownReceiver as BDR
+import bdr_csp.bdr as bdr
 
-from bdr_csp.BeamDownReceiver import (
+from antupy.units import Variable
+
+from bdr_csp.bdr import (
     HyperboloidMirror,
     SolarField,
     TertiaryOpticalDevice,
@@ -195,8 +194,8 @@ def plot_receiver_rad_map(
     
     n_tods = TOD.n_tods
 
-    radious_ap = TOD.radious_ap
-    radious_out = TOD.radious_out
+    radius_ap = TOD.radius_ap
+    radius_out = TOD.radius_out
 
     N_hel = len(R2[R2["hel_in"]]["hel"].unique())
     total_rad = Etas['Eta_SF'] * (CST['Gbn']*CST['A_h1']*N_hel)
@@ -210,8 +209,8 @@ def plot_receiver_rad_map(
     f_s = 16
 
     for N in range(n_tods):
-        xA,yA = TOD.perimeter_points(radious_ap, tod_index=N)
-        xO,yO = TOD.perimeter_points(radious_out, tod_index=N)
+        xA,yA = TOD.perimeter_points(radius_ap, tod_index=N)
+        xO,yO = TOD.perimeter_points(radius_out, tod_index=N)
         ax.plot(xA,yA,c='k')
         ax.plot(xO,yO,c='k')
     vmin = 0
@@ -279,11 +278,13 @@ def get_radious_out(*args):
     def area_rqrd(rO,*args):
         A_rcv_rq, geometry, array, xrc, yrc, zrc, Cg = args
         A_rcv = TertiaryOpticalDevice(
-            params={"geometry":geometry, "array":array, "Cg":Cg, "rO":rO},
+            geometry = geometry, array = array, Cg = Cg, radius_out=Variable(rO,"m"),
             xrc=xrc, yrc=yrc, zrc=zrc,
-        ).receiver_area
+        ).receiver_area.get_value("m2")
         return A_rcv - A_rcv_rq
-    return fsolve(area_rqrd, 1.0, args=args)[0]
+    return Variable(
+        fsolve(area_rqrd, 1.0, args=args)[0], "m"
+        )
 
 
 # SETTING CONDITIONS
@@ -377,7 +378,7 @@ class CSPPlant():
 
 
 def run_parametric(
-        zfs: list,
+        tower_heights: list,
         fzvs: list,
         Cgs: list,
         arrays: list,
@@ -388,8 +389,8 @@ def run_parametric(
 ):
 
     Npan  = 1
-    Ah1   = 2.92**2
-    lat   = -23.
+    Ah1   = Variable(2.92**2, "m2")
+    lat   = Variable(-23., "deg")
     type_shdw = 'point'
     
     fldr_dat  = os.path.join(DIR_DATA, 'mcrt_datasets_final')
@@ -398,8 +399,10 @@ def run_parametric(
     fldr_rslt = os.path.join(DIR_PROJECT, "testing")
     file_rslt =  os.path.join(fldr_rslt, 'testing.txt')
 
-    # txt_header  = 'Pel\tzf\tfzv\tCg\tgeometry\tarray\teta_cos\teta_blk\teta_att\teta_hbi\teta_tdi\teta_tdr\teta_TOD\teta_BDR\teta_SF\tPel_real\tN_hel\tS_hel\tS_HB\tS_TOD\tH_TOD\trO\tQ_max\tstatus\n'
-    file_cols = ['Pel','zf','fzv',
+    file_rslt2 =  os.path.join(fldr_rslt, 'testing.csv')
+
+    data = []
+    COLS_OUTPUT = ['Pel','zf','fzv',
                  'Cg','geometry','array',
                  'eta_cos','eta_blk','eta_att',
                  'eta_hbi','eta_tdi', 'eta_tdr',
@@ -407,6 +410,8 @@ def run_parametric(
                  'Pel_real', 'N_hel', 'S_hel',
                  'S_HB', 'S_TOD', 'H_TOD',
                  'rO', 'Q_max','status',]
+    
+    file_cols = COLS_OUTPUT
     txt_header = '\t'.join(file_cols)+'\n'
     
     if write_results:
@@ -416,7 +421,7 @@ def run_parametric(
 
     for (zf,fzv,Cg,array,Pel,geometry) in [
         (zf,fzv,Cg,array,Pel,geometry) 
-        for zf in zfs 
+        for zf in tower_heights 
         for fzv in fzvs 
         for Cg in Cgs 
         for array in arrays 
@@ -433,26 +438,33 @@ def run_parametric(
         #Files for initial data set and HB intersections dataset
         file_SF = file_SF0.format(zf)
         
-        xrc, yrc, zrc = CST["xrc"], CST["yrc"], CST["zrc"]
-        A_rcv_rq = CST['P_SF'] / CST['Q_av']      #Area receiver
-        rO = get_radious_out(A_rcv_rq, geometry, array, xrc, yrc, zrc, Cg)
-        eta_hbi = CST["eta_hbi"]
+        zf_v = Variable(zf, "m")
+        fzv_v = Variable(fzv, "-")
+        Cg_v =  Variable(Cg, "-")
 
-        HSF = SolarField(zf=zf, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
+        xrc = Variable(CST["xrc"], "m")
+        yrc = Variable(CST["yrc"], "m")
+        zrc = Variable(CST["zrc"], "m")
+        eta_hbi = Variable(CST["eta_hbi"], "-")
+
+        A_rcv_rq = CST['P_SF'] / CST['Q_av']      #Area receiver
+        rO = get_radious_out(A_rcv_rq, geometry, array, xrc, yrc, zrc, Cg_v)
+
+        HSF = SolarField(zf=zf_v, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
         HB = HyperboloidMirror(
-            zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=eta_hbi
+            zf=zf_v, fzv=fzv_v, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=eta_hbi
         )
         TOD = TertiaryOpticalDevice(
-            params={"geometry":geometry, "array":array, "Cg":Cg, "rO":rO},
+            geometry = geometry, array = array, radius_out = rO, Cg = Cg_v,
             xrc=xrc, yrc=yrc, zrc=zrc,
         )
 
         ### Calling the heliostat selection function
-        R2, Etas, SF, status = BDR.heliostat_selection(CST,HSF,HB,TOD)
+        R2, Etas, SF, status = bdr.heliostat_selection(CST,HSF,HB,TOD)
         
         #Some postcalculations
         N_hel = len(R2[R2["hel_in"]]["hel"].unique())
-        S_hel = N_hel * HSF.A_h1
+        S_hel = N_hel * HSF.A_h1.get_value("m2")
         Pth_real = SF[SF['hel_in']]['Q_h1'].sum()
         Pel_real = Pth_real * (CST['eta_pb']*CST['eta_sg']*CST['eta_rcv'])
         Q_max = TOD.radiation_flux(R2, Pth_real*1e6)[0].max()
@@ -469,9 +481,26 @@ def run_parametric(
             ] )+'\t'
             + '\t'.join('{:.2f}'.format(x) for x in [
                 Pel_real, N_hel, S_hel, HB.area,
-                TOD.surface_area, TOD.height, TOD.radious_out,
+                TOD.surface_area, TOD.height, TOD.radius_out,
                 Q_max
             ])+'\t'+status+'\n'
+        )
+        data.append(
+            [Pel,zf, fzv, Cg] + 
+            [
+                Etas[x] for x in [
+                    'Eta_cos', 'Eta_blk', 'Eta_att', 
+                    'Eta_hbi', 'Eta_tdi', 'Eta_tdr', 
+                    'Eta_TOD', 'Eta_BDR', 'Eta_SF'
+                ]
+            ] + [
+                Pel_real, N_hel, S_hel,
+                HB.area.get_value("m2"), 
+                TOD.surface_area.get_value("m2"),
+                TOD.height.get_value("m"),
+                TOD.radius_out.get_value("m"),
+                Q_max
+            ]
         )
         
         print(text_r[:-2])
@@ -479,6 +508,9 @@ def run_parametric(
             f = open(file_rslt,'a')
             f.write(text_r)
             f.close()
+
+            df = pd.DataFrame(data, columns=COLS_OUTPUT)
+            df.to_csv(file_rslt2)
 
         # SPECIFIC CONDITIONS PLOTING
         if plot:
@@ -494,11 +526,11 @@ def run_parametric(
 def main():
 
     run_parametric(
-        zfs   = [50],
+        tower_heights   = [50],
         fzvs  = [0.83,],
         Cgs   = [2.0,],
         arrays = ['A'],
-        geometries = ['PB',],
+        geometries = ['PB', "CPC"],
         Pels  = [10],
         write_results = True,
         plot = True

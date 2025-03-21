@@ -13,6 +13,8 @@ pd.set_option('display.max_columns', None)
 
 import bdr_csp.PerformancePowerCycle as PPC
 
+from antupy.units import Variable
+
 DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
 
 def get_data_location(location: int) -> tuple[float,float,str]:
@@ -178,9 +180,9 @@ for (location,Ntower) in [(location,Ntower) for location in locations for Ntower
 
         #Design power block efficiency and capacity
         Prcv   = CSTo['P_rcv']
-        P_pb   = Prcv / SM          #[MW] Design value for Power from receiver to power block
+        P_pb   = Prcv / SM                   #[MW] Design value for Power from receiver to power block
         P_el   = Ntower * eta_pb_des * P_pb  #[MW] Design value for Power Block generation
-        Q_stg  = P_pb * T_stg       #[MWh] Capacity of storage per tower
+        Q_stg  = P_pb * T_stg                #[MWh] Capacity of storage per tower
         CSTo['P_pb']  = P_pb
         CSTo['P_el']  = P_el
         CSTo['Q_stg'] = Q_stg
@@ -197,7 +199,10 @@ for (location,Ntower) in [(location,Ntower) for location in locations for Ntower
         # sys.exit()
         res = pd.DataFrame(data,columns=cols)
         
-        plant.weather = df["DNI"].sum()/(365*5+1)/2
+        plant.weather.accumulated = {
+            "dni" : Variable(df["DNI"].sum()/(365*5+1)/2, "kWh/day"),
+            "ghi" : Variable(df["GHI"].sum()/(365*5+1)/2, "kWh/day"),
+        }
     print(
         plant.location,
         plant.weather.accumulated("dni").value,df["DNI"].mean()*48

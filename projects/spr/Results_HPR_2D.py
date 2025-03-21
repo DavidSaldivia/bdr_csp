@@ -16,10 +16,10 @@ from os.path import isfile
 import pickle
 import time
 import sys
-import bdr_csp.BeamDownReceiver as BDR
+import bdr_csp.bdr as bdr
 import bdr_csp.SolidParticleReceiver as SPR
 
-from bdr_csp.BeamDownReceiver import (
+from bdr_csp.bdr import (
     SolarField,
     HyperboloidMirror,
     TertiaryOpticalDevice,
@@ -105,7 +105,7 @@ def parametric_study(
         
         else:
             
-            CSTi = BDR.CST_BaseCase()
+            CSTi = bdr.CST_BaseCase()
             CSTi['costs_in'] = SPR.get_plant_costs()         #Plant related costs
             CSTi['type_rcvr'] = 'HPR_0D'
             file_SF = os.path.join(
@@ -301,7 +301,7 @@ def plotting_results(df_res):
 #%% ANALYZING THE FUNCTION
 
 def analysing_function():
-    CSTi = BDR.CST_BaseCase()
+    CSTi = bdr.CST_BaseCase()
 
     #Plant related costs
     Costs = SPR.Plant_Costs()
@@ -340,9 +340,9 @@ def analysing_function():
     #Retrieven the TOD and CST information
     polygon_i=1
     Type, Array, rO, Cg, zrc = [CSTo[x] for x in ['Type', 'Array','rO_TOD','Cg_TOD','zrc']]
-    TOD = BDR.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},0.,0.,zrc)
+    TOD = bdr.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},0.,0.,zrc)
     N_TOD,V_TOD,H_TOD,rO,rA,x0,y0,Arcv = [TOD[x] for x in ['N', 'V', 'H', 'rO', 'rA', 'x0', 'y0', 'A_rcv']]
-    xO,yO = BDR.TOD_XY_R(rO,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)
+    xO,yO = bdr.TOD_XY_R(rO,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)
     lims = xO.min(), xO.max(), yO.min(), yO.max()
     # x_fin=lims[0]; x_ini = lims[1]; y_bot=lims[2]; y_top=lims[3]
 
@@ -419,8 +419,8 @@ def analysing_function():
         cb.ax.tick_params(labelsize=f_s-2)
         fig.text(0.82,0.725,text,fontsize=f_s,ha='center')
         
-        xO,yO = BDR.TOD_XY_R(rO,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)
-        xA,yA = BDR.TOD_XY_R(rA,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)
+        xO,yO = bdr.TOD_XY_R(rO,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)
+        xA,yA = bdr.TOD_XY_R(rA,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)
         lp = len(xA)//2
         fyO = spi.interp1d(xO[:lp],yO[:lp],bounds_error=False,fill_value=0)
         yO2 = fyO(xA[:lp])
@@ -481,9 +481,9 @@ def plotting_radiation_map():
     polygon_i = 1
     fzv, rmax = [CSTo[x] for x in ['fzv', 'rmax']]
     Type, Array, rO, Cg, zrc = [CSTo[x] for x in ['Type', 'Array','rO_TOD','Cg_TOD','zrc']]
-    TOD = BDR.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},0.,0.,zrc)
+    TOD = bdr.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},0.,0.,zrc)
     N_TOD,V_TOD,H_TOD,rO,rA,x0,y0,Arcv = [TOD[x] for x in ['N', 'V', 'H', 'rO', 'rA', 'x0', 'y0', 'A_rcv']]
-    xO,yO = BDR.TOD_XY_R(rO,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)    
+    xO,yO = bdr.TOD_XY_R(rO,H_TOD,V_TOD,N_TOD,x0[polygon_i-1],y0[polygon_i-1],zrc)    
     lims = xO.min(), xO.max(), yO.min(), yO.max()
 
     hlst = SF.iloc[:N_hel].index

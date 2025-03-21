@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from bdr_csp import BeamDownReceiver as BDR
+from bdr_csp import bdr as BDR
 from bdr_csp import SolidParticleReceiver as SPR
 
 CSTi = BDR.CST_BaseCase()

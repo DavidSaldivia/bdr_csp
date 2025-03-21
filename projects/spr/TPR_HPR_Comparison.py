@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 import pickle
 
-from bdr_csp import BeamDownReceiver as BDR
+from bdr_csp import bdr as BDR
 from bdr_csp import SolidParticleReceiver as SPR
 
 zf = 50.
