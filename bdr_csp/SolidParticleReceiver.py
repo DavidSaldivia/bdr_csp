@@ -20,9 +20,10 @@ from bdr_csp import bdr as BDR
 from bdr_csp import htc
 
 from bdr_csp.bdr import (
+    SolarField,
+    HyperboloidMirror,
     TertiaryOpticalDevice
 )
-
 
 def HTM_0D_blackbox(
         Tp: float,
@@ -1741,11 +1742,6 @@ def initial_eta_rcv(CSTi):
 
 ##################################
 
-from bdr_csp.bdr import (
-    SolarField,
-    HyperboloidMirror,
-    TertiaryOpticalDevice
-)
 def run_coupled_simulation(
         CST: dict,
         HSF: SolarField,

@@ -1,74 +1,206 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Aug 30 17:21:20 2022
+from __future__ import annotations
+from dataclasses import dataclass, field
+import os
+from os.path import isfile
+import pickle
+from typing import Callable
 
-@author: z5158936
-"""
 import pandas as pd
 import numpy as np
 import xarray as xr
 import scipy.optimize as spo
-import sys
-import time
-import os
-from os.path import isfile
-import pickle
-
 import cantera as ct
 from pvlib.location import Location
-
 from scipy.interpolate import interp2d
 from scipy.interpolate import RegularGridInterpolator, LinearNDInterpolator
+
 pd.set_option('display.max_columns', None)
 
 absFilePath = os.path.abspath(__file__)
 fileDir = os.path.dirname(os.path.abspath(__file__))
 DIR_MAIN = os.path.dirname(fileDir)
 
+from antupy.units import Variable
 import bdr_csp.bdr as bdr
 import bdr_csp.SolidParticleReceiver as SPR
 from bdr_csp.dir import DIRECTORY
 
 DIR_DATA = DIRECTORY.DIR_DATA
 
+@dataclass
+class CSPPlant():
+    zf: Variable = Variable(50, "m")
+    fzv: Variable  = Variable(0.818161, "-")
+    receiver_power: Variable = Variable(19.,"MW")
+    flux_avg: Variable = Variable(1.25,"MW/m2")
+    xrc: Variable = Variable(0., "m")
+    yrc: Variable = Variable(0., "m")
+    zrc: Variable = Variable(10., "m")
+    Ah1: Variable = Variable(2.92**2, "m2")
+    Npan: int = 1
+    geometry: str = "PB"
+    array: str = "A"
+    Cg: Variable = Variable(2, "-")
+    receiver_area: Variable | None = Variable(20., "m2")
 
-def Getting_BaseCase(zf,Prcv,Qavg,fzv):
+    cost_input: dict[str, float|str] = field(default_factory=SPR.get_plant_costs)
+
+    Gbn: Variable = Variable(950, "W/m2")                # Design-point DNI [W/m2]
+    day: int = 80                                        # Design-point day [-]
+    omega: Variable = Variable(0.0, "rad")               # Design-point hour angle [rad]
+    lat: Variable = Variable(-23., "deg")                # Latitude [°]
+    lng: Variable = Variable(115.9, "deg")               # Longitude [°]
+    state: str = "SA"
+    T_amb: Variable = Variable(300., "K")                # Ambient Temperature [K]
+    type_weather: str | None = 'TMY'                     # Weather source (for CF) Accepted: TMY, MERRA2, None
+    file_weather: str | None = None                      # Weather source (for CF)
+    DNI_min: Variable = Variable(400., "W/m2")           # minimum allowed DNI to operate
+
+    # Characteristics of Solar Field
+    eta_rfl: Variable = Variable(0.95, "-")              # Includes mirror refl, soiling and refl. surf. ratio. Used also for HB and TOD
+    err_tot: Variable = Variable(0.002, "-")             # [rad] Total reflected error
+    type_shadow = 'simple'                               # Type of shadow modelling
+
+    ### Receiver and Storage Tank characteristics
+    type_receiver: str = 'HPR_0D'                             # [-] model for Receiver
+    flux_max: Variable = Variable(3.0, "MW/m2")               # [MW/m2] Maximum radiation flux on receiver
+    temp_cold: Variable = Variable(950,"K")                   # [K] Particle temperature in cold tank
+    temp_hot: Variable = Variable(1200,"K")                   # [K] Particle temperature in hot tank
+    material: str  = 'CARBO'                                  # [-] Thermal Storage Material
+    part_thickness: Variable = Variable(0.05, "m")            # [m] Thickness of material on conveyor belt
+    storage_cap: Variable = Variable(8., "hr")                # [hrs] Hours of storage
+    solar_multiple: Variable = Variable(2.0, "-")             # [-] Initial target for solar multiple
+    HtD_stg: Variable = Variable(0.5, "-")                    # [-] height to diameter ratio for storage tank
     
-    case = 'zf{:.0f}_Q_avg{:.2f}_Prcv{:.0f}'.format(zf, Qavg, Prcv)
-    file_BaseCase = os.path.join(DIR_MAIN, '7_Overall_Optim_Dispatch','Cases',case+'.plk')
-    # file_BaseCase = 'Cases/'+case+'.plk'
+    # Receiver and Power Block efficiencies
+    temp_pb_max: Variable = Variable(875 + 273.15,"K")         #[K] Maximum temperature un power block cycle
+    Ntower: int = 1                                            #[-] Number of towers feeding one power block 
+    eta_pb_des: Variable = Variable(0.50,"-")                  #[-] Power Block efficiency target (initial value) 
+    eta_sg_des: Variable = Variable(1.00,"-")                  #[-] Storage efficiency target (assumed 1 for now)
+    eta_rcv_des: Variable = Variable(0.75, "-")                #[-] Receiver efficiency target (initial value)
+
+    # Characteristics of BDR and Tower
+    # CST['rmin']     = 0.                # Inner radius of HB mirror
+    # CST['rmax']     = 20.               # Outer radius of HB mirror
+
+
+    def run_thermal_subsystem(
+            self,
+            save_detailed_results
+    ) -> tuple[dict,pd.DataFrame, pd.DataFrame]:
+        
+        zf = self.zf.get_value("m")
+        flux_avg = self.flux_avg.get_value("MW/m2")
+        receiver_power = self.receiver_power.get_value("MW")
+        temp_avg = (self.temp_cold.get_value("K") + self.temp_hot.get_value("K")) / 2
+        Ah1 = self.Ah1.get_value("m2")
+        Npan = self.Npan
+        fzv = self.fzv.get_value("-")
+        xrc = self.xrc.get_value("m")
+        yrc = self.yrc.get_value("m")
+        zrc = self.zrc.get_value("m")
+        eta_hbi = self.eta_rfl.get_value("-")
+        geometry = self.geometry
+        array = self.array
+        Cg = self.Cg.get_value("-")
+        
+        eta_receiver = SPR.HTM_0D_blackbox( temp_avg, flux_avg )[0]
+        receiver_area = (receiver_power / eta_receiver) / flux_avg
+
+        self.eta_rcv_des = Variable(eta_receiver, "-")
+        self.receiver_area = Variable(receiver_area, "m2")
+
+
+        file_SF = os.path.join(
+            DIR_DATA,
+            'mcrt_datasets_final',
+            'Dataset_zf_{:.0f}'.format(zf)
+        )
+        self.file_weather = os.path.join(
+            DIR_DATA,
+            'weather',
+            "Alice_Springs_Real2000_Created20130430.csv"
+        )
+
+        HSF = bdr.SolarField(zf=zf, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
+        HB = bdr.HyperboloidMirror(
+            zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=eta_hbi
+        )
+        TOD = bdr.TertiaryOpticalDevice(
+            geometry = geometry, array = array, Cg=Cg, receiver_area= receiver_area,
+            xrc=xrc, yrc=yrc, zrc=zrc,
+        )
+
+        self.type_receiver = 'HPR_2D'
+        R2, SF, CSTo = SPR.run_coupled_simulation(CSTi, HSF, HB, TOD)
+        print(CSTo)
+        
+        if save_detailed_results:
+            pickle.dump([CSTo,R2,SF,TOD],open(file_base_case,'wb'))
+
+        return
+
+    def eta_optical_hourly(
+            self,
+            df: pd.DataFrame,
+            file_alt_azi: str = os.path.join(DIR_DATA,'Preliminaries','1-Grid_AltAzi_vF.csv'),
+            lbl: str ='eta_SF'
+        ) -> RegularGridInterpolator:
+
+        # getting the efficiency grid from the file
+        df_grid = pd.read_csv(file_alt_azi,header=0,index_col=0)
+        df_grid.sort_values(by=['lat','alt','azi'],axis=0,inplace=True)
+        lat = df_grid['lat'].unique()
+        alt = df_grid['alt'].unique()
+        azi = df_grid['azi'].unique()
+        eta = np.array(df_grid[lbl]).reshape(len(lat),len(alt),len(azi))
+        f_int = RegularGridInterpolator(
+            (lat,alt,azi),
+            eta,
+            method='linear',
+            bounds_error=False,fill_value=None
+        )
+
+        # applying the interpolator to the dataframe
+        Npoints = len(df)
+        lats = lat*np.ones(Npoints)
+        azis = df["azi"].to_numpy()
+        azis = np.where(azis>180,360-azis,azis)
+        eles = df["ele"].to_numpy()
+        eta_SF = f_int(np.array([lats,eles,azis]).transpose())
+        
+        return eta_SF
     
-    if isfile(file_BaseCase):
-    # if False:
-        [CSTo,R2,SF,TOD] = pickle.load(open(file_BaseCase,'rb'))
-    else:
-        
-        CSTi = bdr.CST_BaseCase()
-        Costs = SPR.get_plant_costs()
-        CSTi['Costs_i'] = Costs
-    
-        fldr_data = os.path.join(DIR_MAIN, '0_Data\MCRT_Datasets_Final')
-        CSTi['file_SF'] = os.path.join(fldr_data,'Dataset_zf_{:.0f}'.format(zf))
-        CSTi['file_weather'] = os.path.join('Preliminaries','Alice_Springs_Real2000_Created20130430.csv')
-        CSTi['zf']    = zf
-        CSTi['fzv']   = fzv
-        CSTi['Qavg']  = Qavg
-        CSTi['P_rcv'] = Prcv
-        #Estimating eta_rcv to obtain the TOD characteristics
-        CSTi['type_rcvr'] = 'TPR_0D'
-        eta_rcv_i, Arcv, rO_TOD = SPR.Initial_eta_rcv(CSTi)
-        CSTi['eta_rcv'] = eta_rcv_i
-        CSTi['Arcv'] = Arcv
-        CSTi['rO_TOD'] = rO_TOD
-        CSTi['type_rcvr'] = 'TPR_2D'
-        
-        R2, SF, CSTo = SPR.Simulation_Coupled(CSTi)
-        
-        zf,Type,Array,rO,Cg,xrc,yrc,zrc,Npan = [CSTo[x] for x in ['zf', 'Type', 'Array', 'rO_TOD', 'Cg_TOD', 'xrc', 'yrc', 'zrc', 'N_pan']]
-        TOD = bdr.TOD_Params({'Type':Type, 'Array':Array,'rO':rO,'Cg':Cg},xrc,yrc,zrc)
-        
-        pickle.dump([CSTo,R2,SF,TOD],open(file_BaseCase,'wb'))
-    return CSTo,R2,SF,TOD
+    def eta_receiver_hourly(
+            self,
+            df: pd.DataFrame,
+            func_receiver: Callable | None = None,
+    ) -> pd.DataFrame:
+
+        temp_parts_avg = (self.temp_cold.get_value("K") + self.temp_hot.get_value("K")) / 2
+        temp_pb_max = self.temp_pb_max.get_value("K")
+        area_rcv = self.receiver_area.get_value("m2")
+        Npoints = len(df)
+
+        T_pavgs = temp_parts_avg * np.ones(Npoints)
+        TambsK = df["Tamb"].to_numpy()         #Ambient temperature in Kelvin
+        Qavgs = df["DNI"] * df["eta_SF"] * (A_SF / area_rcv) * 1e-6
+        eta_rcv = func_receiver(np.array([T_pavgs,TambsK,Qavgs]).transpose())
+        return eta_rcv
+
+
+    def eta_pb_hourly(
+            self,
+            df: pd.DataFrame,
+            func_pb: Callable | None = None,
+    ) -> pd.DataFrame:
+
+        temp_pb_max = self.temp_pb_max.get_value("K")
+        Npoints = len(df)
+        TambsC = df["Tamb"].to_numpy() - 273.15         #Ambient temperature in Celcius
+        T_maxC = (temp_pb_max-273.15) * np.ones(Npoints)
+        eta_pb = func_pb(np.array([T_maxC,TambsC]).transpose())
+        return eta_pb
 
 def getting_basecase(
         zf: float,
@@ -80,12 +212,14 @@ def getting_basecase(
     ) -> tuple[dict,pd.DataFrame, pd.DataFrame, bdr.TertiaryOpticalDevice]:
 
     # constants
-    xrc, yrc, zrc = (0.,0.,10.)
-    Ah1 = 2.92**2
+    xrc = Variable(0., "m")
+    yrc = Variable(0., "m")
+    zrc = Variable(10., "m")
+    Ah1 = Variable(2.92**2, "m2")
+    Cg = Variable(2, "-")
     Npan = 1
     geometry = "PB"
     array = "A"
-    Cg = 2
 
     # checking if the file existed
     case = 'case_zf{:.0f}_Q_avg{:.2f}_Prcv{:.1f}'.format(zf, Qavg, Prcv)
@@ -116,16 +250,15 @@ def getting_basecase(
         CSTi['P_rcv'] = Prcv
         Tp_avg = (CSTi['T_pC']+CSTi['T_pH'])/2
         CSTi['eta_rcv'] = SPR.HTM_0D_blackbox( Tp_avg, CSTi['Qavg'] )[0]
-        Arcv = (CSTi['P_rcv']/CSTi['eta_rcv']) / CSTi['Qavg']
-        CSTi['Arcv'] = Arcv
+        CSTi['Arcv'] = (CSTi['P_rcv']/CSTi['eta_rcv']) / CSTi['Qavg']
+        Arcv = Variable(CSTi["Arcv"], "m2")
 
         HSF = bdr.SolarField(zf=zf, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
         HB = bdr.HyperboloidMirror(
             zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=CSTi["eta_rfl"]
         )
         TOD = bdr.TertiaryOpticalDevice(
-            geometry = geometry
-            params={"geometry":geometry, "array":array, "Cg":Cg, "Arcv":Arcv},
+            geometry = geometry, array = array, Cg=Cg, receiver_area= Arcv,
             xrc=xrc, yrc=yrc, zrc=zrc,
         )
 
@@ -245,7 +378,7 @@ def eta_HPR_0D() -> RegularGridInterpolator:
         qloss = hrc * (Tp - Tamb)
         eta_th = (qi*1e6*ab_p - qloss)/(qi*1e6)
         eta_ths[i,j,k] = eta_th
-    return RegularGridInterpolator((Tps,Tambs,qis),eta_ths)  #Function to interpolate
+    return RegularGridInterpolator((Tps,Tambs,qis),eta_ths)
 
 
 def eta_TPR_0D(CSTo: dict) -> RegularGridInterpolator:
@@ -279,83 +412,33 @@ def eta_TPR_0D(CSTo: dict) -> RegularGridInterpolator:
         fill_value=None
     )
 
-
-def generating_dataFrame_1year(lat,lon,state,year,dT=0.5):
-    
-    fldr_SP = DIR_MAIN+'\\0_Data\\SpotPrices_old\\'
-    file_SP  = 'SPOT_PRICES_{:d}.csv'.format(year)
-    df_SP = pd.read_csv(fldr_SP+file_SP)
-    df_SP['time'] = pd.to_datetime(df_SP['time'])
-    df_SP.set_index('time', inplace=True)
-    
-    fldr_weather = DIR_MAIN+'\\0_Data\\MERRA-2_Data\\'
-    file_weather  = 'MERRA2_Processed_{:d}.nc'.format(year)
-    data_weather = xr.open_dataset(fldr_weather+file_weather)
-    
-    lats = np.array(data_weather.lat)
-    lons = np.array(data_weather.lon)
-    
-    #Selecting closest value for plant latitud and longitude
-    lon_a = lons[(abs(lons-lon)).argmin()]
-    lat_a = lats[(abs(lats-lat)).argmin()]
-    
-    # Checking states and selecting Demand and SP
-    df_SP_st = df_SP[['Demand_'+state,'SP_'+state]]
-    
-    # Getting the weather file only for the given (lon,lat) and merging data
-    df_w = data_weather.sel(lon=lon_a,lat=lat_a).to_dataframe()
-    df_w.index = df_w.index.tz_localize('UTC')
-    dT_str = '{:.1f}H'.format(dT)
-    df_w = df_w.resample(dT_str).interpolate()       #Getting the data in half hours
-    
-    # Merging the data
-    df = df_w.merge(df_SP_st,how='inner',left_index=True,right_index=True)
-    
-    del data_weather            #Cleaning memory
-    del df_w
-    
-    #Calculating  solar position
-    df.drop(['elevation','azimuth'],axis=1,inplace=True)
-    tz = 'Australia/Brisbane'
-    df.index = df.index.tz_convert(tz)
-    sol_pos = Location(lat, lon, tz=tz).get_solarposition(df.index)
-    df['azimuth'] = sol_pos['azimuth'].copy()
-    df['elevation'] = sol_pos['elevation'].copy()
-    
-    #Setting the initial dataframe for dispatch model
-    df = df[['DNI','T10M','SLP','WS','azimuth','elevation','Demand_'+state,'SP_'+state]]
-    df.rename(columns={'T10M':'Tamb','SLP':'Pr','azimuth':'azi','elevation':'ele'},inplace=True)
-    df.rename(columns={ 'Demand_'+state:'Demand', 'SP_'+state:'SP' },inplace=True)
-    df = df[df.index.year==year]
-    return df
-
-
-def generating_df_aus(
+def load_weather_data(
         lat: float,
-        lon: float,
-        state: str,
+        lng: float,
         year_i: int,
         year_f: int,
-        dT: float = 0.5) -> pd.DataFrame:
+        dT: float = 0.5,
+        file_weather: str | None = None
+) -> pd.DataFrame:
     
-    DIR_WEATHER_DATA = os.path.join(DIR_MAIN,"data","weather")
-    DIR_SPOTPRICE = os.path.join( DIR_MAIN,'data','NEM_spotprice')
-    FILE_SPOTPRICE = os.path.join(DIR_SPOTPRICE, 'NEM_TRADINGPRICE_2010-2020.PLK')
-    FILE_WEATHER  = os.path.join(DIR_WEATHER_DATA, 'MERRA2_Processed_All.nc')
+    tz = 'Australia/Brisbane'
+    
+    if file_weather is None:
+        dir_data = os.path.join(DIR_MAIN,"data","weather")
+        file_weather  = os.path.join(dir_data, 'MERRA2_Processed_All.nc')
 
-    #Spot price data for state
-    df_SP = pd.read_pickle(FILE_SPOTPRICE)
-    df_SP_st = (
-        df_SP[
-        (df_SP.index.year>=year_i) & (df_SP.index.year<=year_f)
-        ][['SP_'+state]]
-    ) 
-    
-    data_weather = xr.open_dataset(FILE_WEATHER)
+    lat_v = lat.get_value("deg")
+    lon_v = lng.get_value("deg")
+    data_weather = xr.open_dataset(file_weather, engine="netcdf4")
     lats = np.array(data_weather.lat)
     lons = np.array(data_weather.lon)
-    lon_a = lons[(abs(lons-lon)).argmin()]
-    lat_a = lats[(abs(lats-lat)).argmin()]
+    lon_a = lons[(abs(lons-lon_v)).argmin()]
+    lat_a = lats[(abs(lats-lat_v)).argmin()]
+
+    # data_weather = data_weather.where(
+    #     (data_weather.time.dt.year >= year_i) & (data_weather.time.dt.year <= year_f)
+    #     , drop=True
+    # )
     df_weather = data_weather.sel(lon=lon_a,lat=lat_a).to_dataframe()
     
     del data_weather #Cleaning memory
@@ -364,34 +447,113 @@ def generating_df_aus(
     df_weather.index = df_weather.index.tz_localize('UTC')
     df_weather = df_weather.resample(f'{dT:.1f}h').interpolate()       #Getting the data in half hours
     df_weather['DNI'] = df_weather['DNI_dirint']
-    
-    # Merging the data
-    df_data = df_weather.merge(
-        df_SP_st,
-        how='inner',
-        left_index=True,
-        right_index=True
-    )
-    del df_weather   #Cleaning memory
-    
+
     #Calculating  solar position
     tz = 'Australia/Brisbane'
-    df_data.index = df_data.index.tz_convert(tz)
-    sol_pos = Location(lat, lon, tz=tz).get_solarposition(df_data.index)
-    df_data['azimuth'] = sol_pos['azimuth'].copy()
-    df_data['elevation'] = sol_pos['elevation'].copy()
-    
-    #Setting the initial dataframe for dispatch model
-    df_data = df_data[['DNI','T2M','WS','azimuth','elevation','SP_'+state]]
-    df_data.rename(
-        columns={'T2M':'Tamb','azimuth':'azi','elevation':'ele'},
-        inplace=True
+    df_weather.index = df_weather.index.tz_convert(tz)
+    sol_pos = Location(lat_v, lon_v, tz=tz).get_solarposition(df_weather.index)
+    df_weather['azimuth'] = sol_pos['azimuth'].copy()
+    df_weather['elevation'] = sol_pos['elevation'].copy()    
+
+    df_weather = df_weather[(df_weather.index.year >= year_i) & (df_weather.index.year <= year_f)]
+
+    #Finishing the weather data
+    df_weather = df_weather[['DNI','T2M','WS','azimuth','elevation']].copy()
+    df_weather.rename(
+        columns={'T2M':'temp_amb'}, inplace=True
     )
-    df_data.rename(
+
+    return df_weather
+
+
+def load_spotprice_data(
+        state: str = "NSW",
+        year_i: int = 2019,
+        year_f: int = 2019,
+        dT: float = 0.5,
+        file_data: str | None = None
+) -> pd.DataFrame:
+    
+    if file_data is None:
+        dir_spotprice = os.path.join( DIR_MAIN,'data','NEM_spotprice')
+        file_data = os.path.join(dir_spotprice, 'NEM_TRADINGPRICE_2010-2020.PLK')
+
+    df_SP = pd.read_pickle(file_data)
+    df_sp_state = (
+        df_SP[
+        (df_SP.index.year>=year_i) & (df_SP.index.year<=year_f)
+        ][['SP_'+state]]
+    )
+    df_sp_state.rename(
         columns={ 'Demand_'+state:'Demand', 'SP_'+state:'SP' },
         inplace=True
     )
-    return df_data
+
+    return df_sp_state
+
+
+# def generating_df_aus(
+#         lat: float,
+#         lon: float,
+#         state: str,
+#         year_i: int,
+#         year_f: int,
+#         dT: float = 0.5) -> pd.DataFrame:
+    
+#     DIR_SPOTPRICE = os.path.join( DIR_MAIN,'data','NEM_spotprice')
+#     FILE_SPOTPRICE = os.path.join(DIR_SPOTPRICE, 'NEM_TRADINGPRICE_2010-2020.PLK')
+#     DIR_WEATHER_DATA = os.path.join(DIR_MAIN,"data","weather")
+#     FILE_WEATHER  = os.path.join(DIR_WEATHER_DATA, 'MERRA2_Processed_All.nc')
+
+#     #Spot price data for state
+#     df_SP = pd.read_pickle(FILE_SPOTPRICE)
+#     df_SP_st = (
+#         df_SP[
+#         (df_SP.index.year>=year_i) & (df_SP.index.year<=year_f)
+#         ][['SP_'+state]]
+#     )
+    
+#     data_weather = xr.open_dataset(FILE_WEATHER)
+#     lats = np.array(data_weather.lat)
+#     lons = np.array(data_weather.lon)
+#     lon_a = lons[(abs(lons-lon)).argmin()]
+#     lat_a = lats[(abs(lats-lat)).argmin()]
+#     df_weather = data_weather.sel(lon=lon_a,lat=lat_a).to_dataframe()
+    
+#     del data_weather #Cleaning memory
+    
+#     df_weather['DNI_dirint'] = df_weather['DNI_dirint'].fillna(0)
+#     df_weather.index = df_weather.index.tz_localize('UTC')
+#     df_weather = df_weather.resample(f'{dT:.1f}h').interpolate()       #Getting the data in half hours
+#     df_weather['DNI'] = df_weather['DNI_dirint']
+    
+#     # Merging the data
+#     df_data = df_weather.merge(
+#         df_SP_st,
+#         how='inner',
+#         left_index=True,
+#         right_index=True
+#     )
+#     del df_weather   #Cleaning memory
+    
+#     #Calculating  solar position
+#     tz = 'Australia/Brisbane'
+#     df_data.index = df_data.index.tz_convert(tz)
+#     sol_pos = Location(lat, lon, tz=tz).get_solarposition(df_data.index)
+#     df_data['azimuth'] = sol_pos['azimuth'].copy()
+#     df_data['elevation'] = sol_pos['elevation'].copy()
+    
+#     #Setting the initial dataframe for dispatch model
+#     df_data = df_data[['DNI','T2M','WS','azimuth','elevation','SP_'+state]]
+#     df_data.rename(
+#         columns={'T2M':'Tamb','azimuth':'azi','elevation':'ele'},
+#         inplace=True
+#     )
+#     df_data.rename(
+#         columns={ 'Demand_'+state:'Demand', 'SP_'+state:'SP' },
+#         inplace=True
+#     )
+#     return df_data
 
 
 def PHX_LMTD(
@@ -639,7 +801,11 @@ def dispatch_model_simple(
             0.
         )
     )
-    df['Dispatch_Extra'] = np.where((df.Rank_Disp_Extra>0)&(df.Rank_Disp_Extra-1<df.disp_remaining), df[['disp_remaining', 'E_avail_Extra']].min( axis=1 ), 0.)
+    df['Dispatch_Extra'] = np.where(
+        (df.Rank_Disp_Extra>0) & (df.Rank_Disp_Extra-1<df.disp_remaining), 
+        df[['disp_remaining', 'E_avail_Extra']].min( axis=1 ), 
+        0.
+    )
     
     df['Dispatch_Full'] = (df["Dispatch_Both"] + df["Dispatch_Extra"])
     
@@ -652,39 +818,33 @@ def dispatch_model_simple(
     return df
 
 
-def annual_performance(df,CSTo,SF,args):
+def annual_performance(
+        plant: CSPPlant,
+        df: pd.DataFrame,
+        CSTo: dict,
+        SF: pd.DataFrame,
+        args: tuple
+        ):
+    
     f_eta_opt, f_eta_TPR, f_eta_pb, dT, DNI_min = args
     
     T_pb_max = CSTo['T_pb_max']
-    T_pavg = (CSTo['T_pH']+CSTo['T_pC'])/2.
     A_SF   = CSTo['S_SF']
-    A_rcv  = CSTo['Arcv']
     Prcv   = CSTo['P_rcv']
     P_el   = CSTo['P_el']           #It already considers the number of towers
     Ntower = CSTo['Ntower']
     Q_stg  = CSTo['Q_stg']
     P_pb   = CSTo['P_pb']
-    lat    = CSTo['lat']
     
     # Obtaining the efficiencies in hourly basis
     Npoints = len(df)
-    df['date'] = df.index.date
+    df["date"] = df.index.date
     Ndays = len(df["date"].unique())
     years = Ndays/365
     
-    lats = lat*np.ones(Npoints)
-    azis = df["azi"].to_numpy()
-    azis = np.where(azis>180,360-azis,azis)
-    eles = df["ele"].to_numpy()
-    df['eta_SF'] = f_eta_opt(np.array([lats,eles,azis]).transpose())
-    T_pavgs = T_pavg * np.ones(Npoints)
-    TambsC = df["Tamb"].to_numpy() - 273.15         #Ambient temperature in Celcius
-    TambsK = df["Tamb"].to_numpy()         #Ambient temperature in Kelvin
-    T_maxC = (T_pb_max-273.15) * np.ones(Npoints)
-    Qavgs = df["DNI"] * df["eta_SF"] * (A_SF / A_rcv) * 1e-6
-    
-    df['eta_rcv'] = f_eta_TPR(np.array([T_pavgs,TambsK,Qavgs]).transpose())
-    df['eta_pb'] = f_eta_pb(np.array([T_maxC,TambsC]).transpose())
+    df["eta_SF"] = plant.eta_optical_hourly(df)
+    df["eta_rcv"] = plant.eta_receiver_hourly(df, eta_HPR_0D())
+    df["eta_pb"] = plant.eta_pb_hourly(df, eta_power_block(file_PB=None))
     
     #Calculations for Collected Energy and potential Dispatched energy
     # Is the Solar Field operating?
@@ -799,3 +959,4 @@ def annual_performance(df,CSTo,SF,args):
         'Stg_min':Stg_min
     }
     return results
+# %%

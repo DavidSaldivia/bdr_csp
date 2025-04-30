@@ -116,6 +116,10 @@ def plot_hb_rad_map(
     ) -> None:
 
 
+    A_h1 = CST["A_h1"].get_value("m2")
+    hb_rmin = HB.rmin.get_value("m")
+    hb_rmax = HB.rmax.get_value("m")
+
     f_s = 18
     out2  = R2[(R2['hel_in'])&(R2['hit_hb'])]
     xmin = out2['xb'].min()
@@ -130,7 +134,7 @@ def plot_hb_rad_map(
     N_hel = len(R2[R2["hel_in"]]["hel"].unique())
     Fbin = (
         CST['eta_rfl'] * Etas['Eta_cos'] * Etas['Eta_blk']
-        * (CST['Gbn'] * CST['A_h1'] * N_hel)
+        * (CST['Gbn'] * A_h1 * N_hel)
         /( 1e3 * dA * len(out2) )
     ) 
     Q_HB,X,Y = np.histogram2d(
@@ -165,11 +169,11 @@ def plot_hb_rad_map(
     fig.text(0.77,0.27,r'$\eta_{hbi}=0.95$',fontsize=f_s-3)
     
     r1 = patches.Circle(
-        (0.,0.0), HB.rmin,
+        (0.,0.0), hb_rmin,
         zorder=10, color='black', fill=None
     )
     r2 = patches.Circle(
-        (0.,0.0), HB.rmax,
+        (0.,0.0), hb_rmax,
         zorder=10,edgecolor='black',fill=None
     )
     ax.add_artist(r1)
@@ -194,11 +198,12 @@ def plot_receiver_rad_map(
     
     n_tods = TOD.n_tods
 
-    radius_ap = TOD.radius_ap
-    radius_out = TOD.radius_out
+    A_h1 = CST["A_h1"].get_value("m2")
+    radius_ap = TOD.radius_ap.get_value("m")
+    radius_out = TOD.radius_out.get_value("m")
 
     N_hel = len(R2[R2["hel_in"]]["hel"].unique())
-    total_rad = Etas['Eta_SF'] * (CST['Gbn']*CST['A_h1']*N_hel)
+    total_rad = Etas['Eta_SF'] * (CST['Gbn']*A_h1*N_hel)
     Q_TOD,X,Y = TOD.radiation_flux(R2, total_rad)
     Q_max   = Q_TOD.max()
 
@@ -357,12 +362,12 @@ from dataclasses import dataclass
 
 @dataclass
 class CSPPlant():
-    design_rad   = 950                # Design-point DNI [W/m2]
-    design_day   = 80                 # Design-point day [-]
-    design_omega = 0.0                # Design-point hour angle [rad]
-    lat   = -23.                      # Latitude [°]
-    lng   = 115.9                     # Longitude [°]
-    temp_amb = 300.                   # Ambient Temperature [K]
+    design_rad = Variable(950, "W/m2")           # Design-point DNI [W/m2]
+    design_day = 80                              # Design-point day [-]
+    design_omega = Variable(0.0, "rad")          # Design-point hour angle [rad]
+    lat   = Variable(-23., "deg")                # Latitude [°]
+    lng   = Variable(115.9, "deg")               # Longitude [°]
+    temp_amb = Variable(300., "K")               # Ambient Temperature [K]
     type_shadow = "simple"
 
     # Receiver and Power Block
@@ -480,13 +485,16 @@ def run_parametric(
                 'Eta_TOD', 'Eta_BDR', 'Eta_SF'
             ] )+'\t'
             + '\t'.join('{:.2f}'.format(x) for x in [
-                Pel_real, N_hel, S_hel, HB.area,
-                TOD.surface_area, TOD.height, TOD.radius_out,
+                Pel_real, N_hel, S_hel,
+                HB.area.get_value("m2"),
+                TOD.surface_area.get_value("m2"),
+                TOD.height.get_value("m"),
+                TOD.radius_out.get_value("m"),
                 Q_max
             ])+'\t'+status+'\n'
         )
         data.append(
-            [Pel,zf, fzv, Cg] + 
+            [Pel,zf, fzv, Cg, geometry, array] + 
             [
                 Etas[x] for x in [
                     'Eta_cos', 'Eta_blk', 'Eta_att', 
@@ -499,7 +507,8 @@ def run_parametric(
                 TOD.surface_area.get_value("m2"),
                 TOD.height.get_value("m"),
                 TOD.radius_out.get_value("m"),
-                Q_max
+                Q_max,
+                status
             ]
         )
         

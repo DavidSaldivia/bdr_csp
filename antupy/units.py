@@ -45,6 +45,10 @@ CONVERSIONS: dict[str,dict[str|None,float]] = {
         "mo": 1e0/(24*3600*30), "month": 1e0/(24*3600*30),
         "yr": 1e0/(24*3600*365), "year": 1e0/(24*3600*365),
     },
+    "temperature": {
+        "K": 1.0,
+        "C": np.nan
+    },
     "mass": {
         "kg": 1e0,
         "g": 1e3,
@@ -75,6 +79,11 @@ CONVERSIONS: dict[str,dict[str|None,float]] = {
         "kWh": 1e-6/3.6,
         "cal": 4.184e0,
         "kcal": 4.184e3,
+    },
+    "energy_flow": {
+        "MW/m2": 1e0,
+        "kJ/m2": 1e3,
+        "J/m2": 1e6,
     },
     "power": {
         "W": 1e0,

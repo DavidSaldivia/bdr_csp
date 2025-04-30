@@ -9,13 +9,15 @@ import sys
 import time
 from os.path import isfile
 from scipy.interpolate import interp1d
+import bdr_csp.PerformancePowerCycle as PPC
+
 pd.set_option('display.max_columns', None)
 
-import bdr_csp.PerformancePowerCycle as PPC
 
 from antupy.units import Variable
 
 DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
+
 
 def get_data_location(location: int) -> tuple[float,float,str]:
     if location == 1:       #Closest location to Mount Isa (example)
