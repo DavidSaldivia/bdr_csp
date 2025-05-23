@@ -16,6 +16,7 @@ import cantera as ct
 import scipy.optimize as spo
 import scipy.interpolate as spi
 
+from antupy.units import Variable
 from bdr_csp import bdr as BDR
 from bdr_csp import htc
 
@@ -24,6 +25,39 @@ from bdr_csp.bdr import (
     HyperboloidMirror,
     TertiaryOpticalDevice
 )
+
+COLS_INPUT = [
+    'location',
+    'temp_stg',
+    'solar_multiple',
+    'receiver_power'
+]
+
+COLS_OUTPUT = [
+    'pb_power_th',
+    'receiver_temp_output',
+    'sf_no_hels',
+    'receiver_rad_flux_max', 
+    'receiver_rad_flux_avg',
+    'receiver_eta',
+    'stg_heat',
+    'stg_mass',
+    'stg_res_time',
+    'stg_vel_flow',
+    'date_simulation'
+]
+
+class ReceiverOutput(TypedDict, total=False):
+    temps_parts: np.ndarray | None
+    n_hels: int | None
+    rad_flux_max: float | None
+    rad_flux_avg: float | None
+    heat_stored: float | None
+    eta_rcv: float | None
+    mass_stg: float | None
+    time_res: float | None
+    vel_p: float | None
+
 
 def HTM_0D_blackbox(
         Tp: float,
@@ -330,16 +364,6 @@ def get_func_heat_flux_rcv1(xr,yr,lims,P_SF1):
     return f_Qrc1, Q_rc1, X_rc1, Y_rc1
 
 
-class ReceiverOutput(TypedDict, total=False):
-    temps_parts: np.array
-    n_hels: int | None
-    rad_flux_max: float | None
-    rad_flux_avg: float | None
-    heat_stored: float | None
-    eta_rcv: float | None
-    mass_stg: float | None
-    time_res: float | None
-    vel_p: float | None
 
 @dataclass
 class HPR0D():
@@ -376,6 +400,7 @@ class HPR0D():
         Q_acc    = SF['Q_h1'].cumsum()
         
         rcvr_output = {
+            "receiver_power": P_bdr,
             "temps_parts" : np.array([Tp]),
             "n_hels" : len( Q_acc[ Q_acc < P_bdr ] ) + 1,
             "rad_flux_max" : np.nan,            #No calculated
@@ -1784,7 +1809,6 @@ def run_coupled_simulation(
             factor_htc = 2.57
         )
         rcvr_output = receiver.run_model(TOD,SF,R2)
-        # rcvr_output = rcvr_HPR_2D_simple(CST, TOD, SF, R2)
         T_p = rcvr_output["temps_parts"]
         N_hel = rcvr_output["n_hels"]
         Q_max = rcvr_output["rad_flux_max"]
@@ -1795,7 +1819,7 @@ def run_coupled_simulation(
         t_res = rcvr_output["time_res"]
 
     elif type_rcvr=='TPR_2D':
-        results, T_p, Rcvr, Rcvr_full = TPR_2D_model(CST, R2, SF, TOD, full_output=True)
+        results, T_p, _, _ = TPR_2D_model(CST, R2, SF, TOD, full_output=True)
         N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, M_p, t_res, vel_p, it, solve_t_res = results
 
     elif type_rcvr=='HPR_0D':

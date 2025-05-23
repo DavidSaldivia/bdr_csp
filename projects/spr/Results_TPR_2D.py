@@ -19,7 +19,7 @@ import time
 import sys
 
 from bdr_csp import bdr as BDR
-from bdr_csp import SolidParticleReceiver as SPR
+from bdr_csp import spr as SPR
 
 # OBTAIN RESULTS FROM OPTICAL SIMULATION AND GENERATE RADIATION FLUX
 def f_Optim1D(X,*args):

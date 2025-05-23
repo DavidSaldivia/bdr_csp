@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from bdr_csp import bdr as BDR
-from bdr_csp import SolidParticleReceiver as SPR
+from bdr_csp import spr as spr
 
 CSTi = BDR.CST_BaseCase()
 air  = ct.Solution('air.yaml')
@@ -15,7 +15,7 @@ data = []
 Fc = 2.57
 for (Tp,qi) in [(Tp,qi) for Tp in Tps for qi in qis]:
     
-    eta_th,h_rad,h_conv = SPR.HTM_0D_blackbox(Tp, qi, Fc=Fc, air=air)
+    eta_th,h_rad,h_conv = spr.HTM_0D_blackbox(Tp, qi, Fc=Fc, air=air)
     data.append([Tp,qi,eta_th,h_rad,h_conv])
     print(data[-1])
 df = pd.DataFrame(data,columns=['Tp','qi','eta','h_rad','h_conv'])
@@ -54,7 +54,7 @@ qi  = 1.0
 data = []
 for (Tp,Fc) in [(Tp,Fc) for Tp in Tps for Fc in Fcs]:
     
-    eta_th,h_rad,h_conv = SPR.HTM_0D_blackbox(Tp, qi, Fc=Fc, air=air)
+    eta_th,h_rad,h_conv = spr.HTM_0D_blackbox(Tp, qi, Fc=Fc, air=air)
     data.append([Tp,Fc,eta_th,h_rad,h_conv])
     print(data[-1])
 df = pd.DataFrame(data,columns=['Tp','Fc','eta','h_rad','h_conv'])

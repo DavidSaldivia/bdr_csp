@@ -4,13 +4,7 @@ module with a simple units manager
 import numpy as np
 from typing import Iterable
 
-#-------------------------
-# Unit conversion factors
-CONVERSIONS: dict[str,dict[str|None,float]] = {
-    "unassigned" : {
-        "None": np.nan,
-        None: np.nan,
-    },
+CONVERSION_FUNDAMENTALS: dict[str,dict[str|None,float]] = {
     "adim" : {
         "-": 1e0,
         "": 1e0,
@@ -26,16 +20,13 @@ CONVERSIONS: dict[str,dict[str|None,float]] = {
         "ft": 3.28084,
         "in": 39.3701,
     },
-    "area" : {
-        "m2": 1e0,
-        "mm2": 1e6,
-        "km2": 1e-6,
-        "ha": 1e-4,
+    "mass": {
+        "kg": 1e0,
+        "g": 1e3,
+        "ton": 1e-3,
+        "lb": 2.20462,
+        "oz": 35.274,
     },
-    "volume": {
-        "m3": 1e0,
-        "L": 1e3,
-        },
     "time": {
         "s": 1e0, "sec": 1e0,
         "min": 1e0/60,
@@ -49,13 +40,33 @@ CONVERSIONS: dict[str,dict[str|None,float]] = {
         "K": 1.0,
         "C": np.nan
     },
-    "mass": {
-        "kg": 1e0,
-        "g": 1e3,
-        "ton": 1e-3,
-        "lb": 2.20462,
-        "oz": 35.274,
+    "current": {
+        "A": 1e0,
+        "mA": 1e3,
+        "kA": 1e-3,
     },
+    "substance": {
+        "mol": 1e0,
+        "mmol": 1e3,
+        "kmol": 1e-3,
+    },
+    "luminous_intensity": {
+        "cd": 1e0,
+        "lm": 1e0,
+    },
+}
+
+CONVERSIONS_DERIVED: dict[str,dict[str|None,float]] = {
+    "area" : {
+        "m2": 1e0,
+        "mm2": 1e6,
+        "km2": 1e-6,
+        "ha": 1e-4,
+    },
+    "volume": {
+        "m3": 1e0,
+        "L": 1e3,
+        },
     "mass_flowrate": {
         "kg/s": 1e0,
         "g/s": 1e3,
@@ -77,6 +88,7 @@ CONVERSIONS: dict[str,dict[str|None,float]] = {
         "MJ": 1e-6,
         "Wh": 1e-3/3.6,
         "kWh": 1e-6/3.6,
+        "MWh": 1e-9/3.6,
         "cal": 4.184e0,
         "kcal": 4.184e3,
     },
@@ -124,6 +136,7 @@ CONVERSIONS: dict[str,dict[str|None,float]] = {
     },
 }
 
+CONVERSIONS : dict[str,dict[str|None,float]] = CONVERSIONS_DERIVED | CONVERSION_FUNDAMENTALS
 UNIT_TYPES: dict[str|None, str] = dict()
 for type_unit in CONVERSIONS.keys():
     for unit in CONVERSIONS[type_unit].keys():
@@ -147,7 +160,29 @@ class Variable():
         self.unit = unit if unit is not None else "None"
         self.type = type
 
+    def __mul__(self, other):
+        """ Overloading the multiplication operator. """
+        if isinstance(other, Variable):
+            return Variable(self.value * other.value, [self.unit, other.unit])
+        elif isinstance(other, (int, float)):
+            return Variable(self.value * other, self.unit)
+        else:
+            raise TypeError(f"Cannot multiply {type(self)} with {type(other)}")
+
+    def __rmul__(self, other):
+        """ Overloading the multiplication operator. """
+        if isinstance(other, Variable):
+            return Variable(self.value * other.value, [other.unit, self.unit])
+        elif isinstance(other, (int, float)):
+            return Variable(self.value * other, self.unit)
+        else:
+            raise TypeError(f"Cannot multiply {type(self)} with {type(other)}")
+
     def get_value(self, unit: str | None = None):
+        """ Get the value of the variable in the requested unit.
+        If the unit is not compatible with the variable unit, an error is raised.
+        If the unit is None, the value is returned in the variable unit.
+        """
         
         if unit is None:
             unit = self.unit
@@ -156,11 +191,34 @@ class Variable():
             return self.value
         
         if UNIT_TYPES[unit] == UNIT_TYPES[self.unit]:
-            conv_factor = conversion_factor(self.unit, unit)
-            return self.value * conv_factor
+            return self.value * conversion_factor(self.unit, unit)
         else:
             raise ValueError( f"Variable unit ({self.unit}) and wanted unit ({unit}) are not compatible.")
 
+    def set_unit(self, unit: str | None = None):
+        """ Set the unit of the variable. """
+        if UNIT_TYPES[unit] == UNIT_TYPES[self.unit]:
+            self.value = self.value * conversion_factor(self.unit, unit)
+        else:
+            raise ValueError(
+                f"unit ({unit}) is not compatible with existing primary unit ({self.unit})."
+            )
+
+    @property
+    def v(self) -> float:
+        """ Property to obtain the value of the variable (in its primary unit). """
+        return self.value
+    
+    @property
+    def u(self) -> str:
+        """ Property to obtain the primary unit of the variable. """
+        return self.unit
+    
+    @property
+    def units(self) -> str:
+        """ Property to obtain the compatible units of the variable. """
+        return UNIT_TYPES[self.u]
+    
     def __repr__(self) -> str:
         return f"{self.value:} [{self.unit}]"
 

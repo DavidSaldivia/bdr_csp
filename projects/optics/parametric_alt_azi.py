@@ -16,7 +16,7 @@ from matplotlib import cm
 import matplotlib.patches as patches
 
 from bdr_csp import bdr as BDR
-import bdr_csp.AntuPy as AP
+from bdr_csp.solar import Sun
 
 
 ####################################
@@ -373,11 +373,11 @@ plt.colorbar(mapp,cax=cbar_ax,ticks=np.linspace(vmin,vmax,int(lvs/2)+1))
 cbar.set_label('Optical efficiency ', rotation=-270, fontsize=f_s)
 
 
-sol = AP.Sun()
+sol = Sun()
 dfs = []
 days = [80,172,355];
 for (N,t) in [(N,t) for N in days for t in np.arange(5,12.1,0.1)]:
-    sol = AP.Sun()
+    sol = Sun()
     sol.lat = -25.
     sol.lng = 133.9
     sol.update(N=N,t=t,UTC=9.5)
@@ -483,7 +483,7 @@ for (T_stg,SM) in [(T_stg,SM) for T_stg in np.arange(8,8.1,4) for SM in np.arang
     for idx,row in TMY.iterrows():
         
         if row['DNI']>0:
-            sol = AP.Sun()
+            sol = Sun()
             sol.lat = -23.8
             sol.lng = 133.8
             sol.update(N=row['N'],t=row['t'],UTC=9.5)

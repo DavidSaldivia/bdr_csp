@@ -17,7 +17,7 @@ import pickle
 import time
 import sys
 import bdr_csp.bdr as bdr
-import bdr_csp.SolidParticleReceiver as SPR
+import bdr_csp.spr as SPR
 
 from bdr_csp.bdr import (
     SolarField,
@@ -132,7 +132,7 @@ def parametric_study(
                zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=CSTi["eta_rfl"]
             )
             TOD = TertiaryOpticalDevice(
-                params={"geometry":geometry, "array":array, "Cg":Cg, "Arcv":Arcv},
+                geometry=geometry, array=array, Cg=Cg, receiver_area=Arcv,
                 xrc=xrc, yrc=yrc, zrc=zrc,
             )
             # CSTi['rO_TOD'] = TOD.radius_out
