@@ -16,7 +16,7 @@ from matplotlib import cm
 import matplotlib.patches as patches
 
 from bdr_csp import bdr as BDR
-from bdr_csp.solar import Sun
+from antupy.solar import Sun
 
 
 ####################################

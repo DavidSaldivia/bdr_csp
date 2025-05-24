@@ -254,7 +254,7 @@ class Sun:
     
     @property
     def altitude(self):
-        return self._angles_hour['altitude']
+        return self.angles_hour['altitude']
     @property
     def zenit(self):
         return self.angles_hour['zenit']
@@ -273,12 +273,12 @@ class Sun:
 
 @dataclass
 class Plane:
-    traking = 0          # Tracking system. By default 0 (no tracking)
-    beta = None            # [°] Inclination angle. By default 0
-    azimuth = None            # [°] Surface Azimuth Angle
-    Rb = 0.              # Rb factor (for radiation models)
-    theta = None           # [°] Incidence angle
-    Gon = None             # [W/m2] Global radiation on the plane
+    traking: int = 0                     # Tracking system. By default 0 (no tracking)
+    beta: float | None = None            # [°] Inclination angle. By default 0
+    azimuth: float | None = None         # [°] Surface Azimuth Angle
+    Rb: float = 0.                       # Rb factor (for radiation models)
+    theta: float | None = None           # [°] Incidence angle
+    Gon: float | None = None             # [W/m2] Global radiation on the plane
 
 def solar_variables(
         sun: Sun,
@@ -295,12 +295,8 @@ def solar_variables(
             4 = fixed tilted plane (tilt=lat), with vertical axis tracking
             5 = E-W tracking, paralell to earth N-S axis
             10 = full tracking (two axis)
-        
-         
 
-
-
-        3.- Collector:
+        Output Collector:
         az       =  [°] Surface Azimuth Angle
         beta     =  [°] Inclination angle
         theta    =  [°] Incidence angle
@@ -310,14 +306,19 @@ def solar_variables(
 
 
     declination = sun.declination
-    L = sun.lat
+    L = sun.latitude
     h = sun.h
     az_s = sun.azim
     zenith = sun.zenit
 
     tracking = plane.traking
+
+    beta = None
+    azimuth = None
+    theta = None
+    Rb = None
     
-    if 'n' not in sun and 'L' not in sun and 't' not in sun:       #Collector Vars
+    if sun.N is None and sun.latitude is None and sun.t is None:       #Collector Vars
         raise ValueError('Not enough input for Collector angles')
         
     if tracking==0:
@@ -369,9 +370,10 @@ def solar_variables(
     }
 
 def radiative_models(
+        model: int,
         sun: Sun,
-        model: str,
-        vrs:dict,
+        plane: Plane,
+        params: dict[str,float],
     ) -> dict:
     """
     Estimation of radiation components and global radiation over surface.
@@ -383,8 +385,14 @@ def radiative_models(
     
     The output is the total radiation and beam radiation in given plane    
     """
-    Ihb, Ihd, albedo = vrs['Ihb'], vrs['Ihd'], vrs['albedo']
-    Rb, beta, zenit  = sun['Rb'] , sun['beta'] , sun['zen'] 
+    Ihb = params['Ihb']
+    Ihd = params['Ihd']
+    albedo = params['albedo']
+    dt = params['dt']
+
+    Rb  = plane.Rb
+    beta = plane.beta if plane.beta is not None else np.nan
+    zenit = sun.zenit 
     
     Iho              = 1300.    #!!!!
     
@@ -407,7 +415,9 @@ def radiative_models(
         Ib = (Ihb + Ihd * Ai) * Rb
         
     elif model == 4:
-        theta, Gon, dt = sun['theta'] , sun['Gon'] , sun['dt'] 
+        theta = plane.theta if plane.theta is not None else np.nan
+        Gon = plane.Gon if plane.Gon is not None else np.nan
+        
         m = 1/np.cos(zenit) if zenit < (70*DtR) else 1/( np.cos(zenit) + 0.5057*(96.08 - zenit/DtR )**(-1.634) )
         c1 = max( 0., np.cos(theta) )
         c2 = max( np.cos(85.*DtR), np.cos(zenit) )
