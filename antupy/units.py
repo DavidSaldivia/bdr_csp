@@ -152,7 +152,7 @@ class Variable():
     """
     def __init__(
             self,
-            value: float,
+            value: float | None,
             unit: str | None = None,
             type: str = "scalar"
         ):
@@ -162,6 +162,8 @@ class Variable():
 
     def __mul__(self, other):
         """ Overloading the multiplication operator. """
+        if self.value is None or other.value is None:
+            return Variable(None, [self.unit, other.unit])
         if isinstance(other, Variable):
             return Variable(self.value * other.value, [self.unit, other.unit])
         elif isinstance(other, (int, float)):
@@ -171,6 +173,8 @@ class Variable():
 
     def __rmul__(self, other):
         """ Overloading the multiplication operator. """
+        if self.value is None or other.value is None:
+            return Variable(None, [self.unit, other.unit])
         if isinstance(other, Variable):
             return Variable(self.value * other.value, [other.unit, self.unit])
         elif isinstance(other, (int, float)):
@@ -178,7 +182,7 @@ class Variable():
         else:
             raise TypeError(f"Cannot multiply {type(self)} with {type(other)}")
 
-    def get_value(self, unit: str | None = None):
+    def get_value(self, unit: str | None = None) -> float:
         """ Get the value of the variable in the requested unit.
         If the unit is not compatible with the variable unit, an error is raised.
         If the unit is None, the value is returned in the variable unit.
@@ -186,10 +190,10 @@ class Variable():
         
         if unit is None:
             unit = self.unit
-
+        if self.value is None:
+            raise ValueError("Variable value is None.")
         if self.unit == unit:
             return self.value
-        
         if UNIT_TYPES[unit] == UNIT_TYPES[self.unit]:
             return self.value * conversion_factor(self.unit, unit)
         else:
@@ -197,7 +201,8 @@ class Variable():
 
     def set_unit(self, unit: str | None = None):
         """ Set the unit of the variable. """
-        if UNIT_TYPES[unit] == UNIT_TYPES[self.unit]:
+        self.unit = unit
+        if (UNIT_TYPES[unit] == UNIT_TYPES[self.unit]) and (self.value is not None):
             self.value = self.value * conversion_factor(self.unit, unit)
         else:
             raise ValueError(
@@ -207,10 +212,10 @@ class Variable():
     @property
     def v(self) -> float:
         """ Property to obtain the value of the variable (in its primary unit). """
-        return self.value
+        return self.value if self.value is not None else np.nan
     
     @property
-    def u(self) -> str:
+    def u(self) -> str | None:
         """ Property to obtain the primary unit of the variable. """
         return self.unit
     

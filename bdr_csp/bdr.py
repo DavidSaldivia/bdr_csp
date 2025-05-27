@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from os.path import isfile
 import pickle
@@ -15,6 +15,10 @@ from scipy.integrate import quad
 from pvlib.location import Location
 
 from antupy.units import (Variable, conversion_factor as CF)
+
+if TYPE_CHECKING:
+    from bdr_csp.PowerCycle import PlantCSPBeamDownParticle
+
 
 R0_COLS = ['xi','yi','zi', 'uxi','uyi','uzi', 'hel']
 R1_COLS = ['hel','xi','yi','zi', 
@@ -72,6 +76,9 @@ class SolarField():
         save_plk = kwargs['save_plk'] if 'save_plk' in kwargs else False
         read_plk = kwargs['read_plk'] if 'read_plk' in kwargs else True
         
+        if file_SF is None:
+            raise ValueError("file_SF must be defined, it is the name of the file with the rays data.")
+
         if isfile(file_SF+'.plk') and read_plk:
             R0,SF = pickle.load(open(file_SF+'.plk','rb'))
             self.helios = SF
@@ -95,7 +102,7 @@ class SolarField():
         
         #DF used to HB rays interceptions
         R0 = pd.merge(r_sf,r_tw, how='inner', on=['xi','yi','zi']).sort_values('hel')
-        R0 = R0[R0['hel']<=N_hel][['xi','yi','zi','uxi','uyi','uzi','hel']]
+        R0 = pd.DataFrame(R0[R0['hel']<=N_hel][['xi','yi','zi','uxi','uyi','uzi','hel']])
         R0['ri'] = (R0['xi']**2 + R0['yi']**2)**0.5
         
         #Getting the solar field DataFrame
@@ -134,14 +141,16 @@ class HyperboloidMirror():
     yrc: Variable = Variable(0.0, "m")
     zrc: Variable = Variable(0.0, "m")
     eta_hbi: Variable = Variable(0.95, "-")
-    rmin: Variable|None = None
-    rmax: Variable|None = None
-    area: Variable|None = None
-    zmin: Variable|None = None
-    zmax: Variable|None = None
+
+    #output
+    rmin: Variable = Variable(None,"m")
+    rmax: Variable = Variable(None,"m")
+    area: Variable = Variable(None,"m")
+    zmin: Variable = Variable(None,"m")
+    zmax: Variable = Variable(None,"m")
 
     @property
-    def zv(self) -> float:
+    def zv(self) -> Variable:
         return Variable(self.zf.get_value("m") * self.fzv.get_value("-"), "m")
 
     def height_range(self) -> tuple[float, float]:       # HB_zrange
@@ -328,7 +337,10 @@ class HyperboloidMirror():
                 ).alias("kb")
             )
             .with_columns(     # intersection with mirror
-                [(pl.col(f'{j}i') + pl.col("kb")*pl.col(f"u{j}i")).alias("{j}b") for j in ["x", "y", "z"]]
+                [
+                    (pl.col(f'{j}i') + pl.col("kb")*pl.col(f"u{j}i"))
+                    .alias("{j}b") for j in ["x", "y", "z"]
+                ]
             )
             .with_columns( #partial differentiation
                 (-2*(pl.col('xb') - xo)/b**2).alias("ddx"),
@@ -411,10 +423,10 @@ class HyperboloidMirror():
         times = pd.date_range('2021-01-01','2021-12-31 23:59:00', tz=tz, freq=str(tdelta)+'h')
         times = times[times.dayofyear.isin(Ns)]
         sol_pos = Location(lat, lng, tz=tz ).get_solarposition(times)
-        sol_pos = sol_pos[sol_pos.elevation>0]
+        sol_pos = pd.DataFrame(sol_pos[sol_pos["elevation"]>0])
         
-        alt_r  = np.radians(sol_pos.elevation)
-        azi_r  = np.radians(sol_pos.azimuth)
+        alt_r  = np.radians(sol_pos["elevation"])
+        azi_r  = np.radians(sol_pos["azimuth"])
         shd_mx = zmax / np.tan(alt_r) + rmax
         shd_c  = zmin / np.tan(alt_r)
         sol_pos['shd_x']  = - np.sin(azi_r) * shd_c
@@ -422,9 +434,12 @@ class HyperboloidMirror():
         sol_pos['shd_r']  = (shd_mx - shd_c)
         
         SF['sh'] = 0
-        for row in sol_pos.itertuples():
-            Shadow = ((row.shd_x - SF['xi'])**2+(row.shd_y - SF['yi'])**2)**0.5 < row.shd_r
-            SF['sh'] = np.where(Shadow,SF['sh']+1,SF['sh'])
+        for idx,row in sol_pos.iterrows():
+            Shadow = (
+                ((row["shd_x"] - SF['xi'])**2+(row["shd_y"] - SF['yi'])**2)**0.5 
+                < row["shd_r"]
+            )
+            SF['sh'] = np.where(Shadow, SF['sh']+1, SF['sh'])
         
         ft = len(sol_pos)
         f_days = 365/len(Ns)
@@ -446,17 +461,14 @@ class TertiaryOpticalDevice():
     yrc: Variable = Variable(0.0,"m")
     zrc: Variable = Variable(0.0,"m")
     
-    radius_ap: Variable | None = None
-    radius_out: Variable | None = None
-    height: Variable | None = None
-    Cg: Variable | None = None
-    receiver_area: Variable | None = None
+    radius_ap: Variable= Variable(None, "m")
+    radius_out: Variable= Variable(None, "m")
+    height: Variable= Variable(None, "m")
+    Cg: Variable= Variable(None, "-")
+    receiver_area: Variable= Variable(None, "m2")
 
-    def __post_init__(
-            self,
-        ):
+    def __post_init__(self):
         self.update_params()
-        return None
 
     def update_params(self):
 
@@ -468,13 +480,13 @@ class TertiaryOpticalDevice():
         
         #For Paraboloid, it requires two of the following parameters: rA, rO, H, Cg, Arcv
         if geometry == 'PB':
-            if self.radius_ap is not None and self.radius_out is not None:
+            if self.radius_ap.v is not np.nan and self.radius_out.v is not np.nan:
                 rA = self.radius_ap.get_value("m")
                 rO = self.radius_out.get_value("m")
                 H  = rA**2 - rO**2
                 Cg = (rA/rO)**2                      #Concentration ratio of each TOD
                 
-            elif self.radius_ap is not None and self.height is not None:
+            elif self.radius_ap.v is not np.nan and self.height.v is not np.nan:
                 rA = self.radius_ap.get_value("m")
                 H = self.height.get_value("m")
                 
@@ -485,25 +497,25 @@ class TertiaryOpticalDevice():
                     H  = rA**2-rO**2
                 Cg = (rA/rO)**2
             
-            elif self.radius_ap is not None and self.Cg is not None:
+            elif self.radius_ap.v is not np.nan and self.Cg.v is not np.nan:
                 rA = self.radius_ap.get_value("m")
                 Cg = self.Cg.get_value("-")
                 rO    = rA/Cg**0.5
                 H     = rA**2 - rO**2
             
-            elif self.radius_out is not None and self.height is not None:
+            elif self.radius_out.v is not np.nan and self.height.v is not np.nan:
                 rO = self.radius_out.get_value("m")
                 H = self.height.get_value("m")
                 rA    = (H + rO**2)**0.5
                 Cg    = (rA/rO)**2
             
-            elif self.radius_out is not None and self.Cg is not None:
+            elif self.radius_out.v is not np.nan and self.Cg.v is not np.nan:
                 rO = self.radius_out.get_value("m")
                 Cg = self.Cg.get_value("-")
                 rA    = rO*Cg**0.5
                 H     = rA**2-rO**2
             
-            elif self.receiver_area is not None and self.Cg is not None:
+            elif self.receiver_area.v is not np.nan and self.Cg.v is not np.nan:
                 Arcv = self.receiver_area.get_value("m2")
                 Cg = self.Cg.get_value("-")
                 rO = (Arcv / ( V*N*np.tan(np.pi/V) ) )**0.5
@@ -526,14 +538,14 @@ class TertiaryOpticalDevice():
             fl    = np.nan
             
         #For CPC, for now, it only accepts rO and Cg as initial parameters
-        if geometry =='CPC':
+        elif geometry =='CPC':
             rO = self.radius_out.get_value("m")
             Cg = self.Cg.get_value("-")
 
             RtD = 180./np.pi
-            rA = rO * Cg**0.5                   # CPC aperture radius
-            tht_mx = np.arcsin(1/Cg**0.5)       # half acceptance angle
-            fl = rO * (1+np.sin(tht_mx))     # Focal point
+            rA = rO * Cg**0.5
+            tht_mx = np.arcsin(1/Cg**0.5)
+            fl = rO * (1+np.sin(tht_mx))
             phi_i = np.pi #/2+tht_mx
             phi_f = 2*tht_mx
             
@@ -570,6 +582,14 @@ class TertiaryOpticalDevice():
             N,V,phi,S1,H,Cg, = 0,0,0,0,0,1
             rO = self.radius_out.get_value("m")
             rA = self.radius_ap.get_value("m")
+            S_TOD = np.nan
+            theta = np.nan
+            tht = np.nan
+            fl = np.nan
+            zmin = 0.
+            zmax = np.nan
+        else:
+            raise ValueError("Wrong geometry type, it must be 'PB', 'CPC' or None")
         
         ## Creating the object
         self.radius_ap = Variable(rA,"m")
@@ -607,6 +627,8 @@ class TertiaryOpticalDevice():
             "F": (1,int(1e6)),     # Full circle
             "N": (1,0),            # Non-TOD
         }
+        if self.array not in array_values:
+            raise ValueError(f"Invalid array type: {self.array}. Must be one of {list(array_values.keys())}.")
         return array_values[self.array]
 
     def array_centers(self) -> tuple[list[float], list[float]]:
@@ -697,7 +719,7 @@ class TertiaryOpticalDevice():
 
         return xmin,xmax,ymin,ymax
     
-    def radiation_flux(self, R2, total_rad) -> tuple[np.array,np.array,np.array]:
+    def radiation_flux(self, R2, total_rad) -> tuple[np.ndarray,np.ndarray,np.ndarray]:
         xmin,xmax,ymin,ymax = self.limits()
         Nx = 100
         Ny = 100
@@ -1119,7 +1141,7 @@ def heliostat_selection(
         HB: HyperboloidMirror,
         TOD: TertiaryOpticalDevice,
         verbose: bool = True
-    ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.DataFrame, str]:
+    ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, str]:
 
     type_shdw = CST['type_shdw'] if 'type_shdw' in CST else 'None'
     eta_hbi = HB.eta_hbi.get_value("-")
@@ -1129,7 +1151,6 @@ def heliostat_selection(
 
     # loading dataset
     R0, SF = HSF.load_dataset(save_plk=True)
-    SF = HSF.helios
     N_max   = len(R0['hel'].unique())
     if verbose:
         print("Rays dataset loaded")
@@ -1243,7 +1264,7 @@ def heliostat_selection(
 
 
 def optical_efficiencies(
-        CST: dict,
+        plant: PlantCSPBeamDownParticle,
         R2: pd.DataFrame,
         SF: pd.DataFrame
     ) -> pd.DataFrame:
@@ -1266,7 +1287,9 @@ def optical_efficiencies(
 
     """
     
-    Gbn,A_h1,eta_rfl = [CST[x] for x in ['Gbn', 'A_h1', 'eta_rfl']]
+    Gbn = plant.Gbn.get_value("W/m2")
+    A_h1 = plant.Ah1.get_value("m2")
+    eta_rfl = plant.eta_rfl.get_value("-")
     
     SF2 = R2.groupby('hel')[['hel_in','hit_hb','hit_tod','hit_rcv']].sum()
     SF['Eta_att'] = get_eta_attenuation(R2)
@@ -1433,7 +1456,7 @@ def HB_mass_cooling(
         CST: dict,
         SF: pd.DataFrame,
         full_results: bool = False
-    ) -> tuple[list,list] | list:
+    ) -> tuple[tuple,tuple] | tuple:
     Etas = SF[SF['hel_in']].mean()
     hlst = SF[SF.hel_in].index
     N_hel = len(hlst)
@@ -1519,12 +1542,12 @@ def HB_mass_cooling(
 
 
 def PB_Z(
-        x: float | list | np.ndarray,
-        y: float | list | np.ndarray,
+        x: float | np.ndarray,
+        y: float | np.ndarray,
         V: int,
-        xo: list[float],
-        yo: list[float]
-    ) -> float | list | np.ndarray:
+        xo: float,
+        yo: float
+    ) -> float | np.ndarray:
     """
     Function that return the z position in PB concentrator for a given (x,y) position
 

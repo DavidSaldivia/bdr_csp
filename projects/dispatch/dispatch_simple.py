@@ -46,9 +46,9 @@ def load_base_case():
 
 def dispatch_single_case(
         plant: ppc.PlantCSPBeamDownParticle,
-        year_i: float = 2019,
-        year_f: float = 2019,
-        ) -> None:
+        year_i: int = 2019,
+        year_f: int = 2019,
+        ) -> pd.DataFrame:
 
     receiver_power = plant.receiver_power.get_value("MW")
     Ntower = plant.Ntower
@@ -56,11 +56,13 @@ def dispatch_single_case(
     solar_multiple = plant.solar_multiple.get_value("-")
     pb_eta_des = plant.pb_eta_des.get_value("-")
 
+    latitude = plant.lat.get_value("deg")
+    longitude = plant.lng.get_value("deg")
     
     dT = 0.5            #Time in hours
     print('Charging new dataset')
 
-    df_weather = ppc.load_weather_data(plant.lat, plant.lng, year_i, year_f, dT)
+    df_weather = ppc.load_weather_data(latitude, longitude, year_i, year_f, dT)
     df_sp = ppc.load_spotprice_data(plant.state, year_i, year_f, dT)
     df = df_weather.merge(df_sp, how="inner", left_index=True, right_index=True)
     
@@ -97,6 +99,7 @@ def main():
         receiver_power = Variable(19.,"MW"),
         flux_avg = Variable(1.25,"MW/m2"),
     )
+    CSTo, R2, SF = plant.run_thermal_subsystem()
 
     results = dispatch_single_case(plant)
 
