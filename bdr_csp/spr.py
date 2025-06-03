@@ -51,12 +51,12 @@ COLS_OUTPUT = [
 ]
 
 class ReceiverOutput(TypedDict):
-    temps_parts: np.ndarray | None
-    n_hels: int | None
-    rad_flux_max: float | None
+    temps_parts: np.ndarray
+    n_hels: int
+    rad_flux_max: float
     rad_flux_avg: float | None
     heat_stored: float | None
-    eta_rcv: float | None
+    eta_rcv: float
     mass_stg: float | None
     time_res: float | None
     vel_p: float | None
@@ -1037,7 +1037,11 @@ def getting_T_w(T_w,*args):
     
     sigma = 5.674e-8
     
-    q_w_net = (sigma/C_tw)*(T_pavg**4 - T_w**4) - F_w_ap*em_w*sigma*A_w*(T_w**4-Tsky**4) - h_w_amb*A_w*(T_w-Tamb)
+    q_w_net = (
+        (sigma/C_tw) * (T_pavg**4 - T_w**4) 
+        - F_w_ap*em_w*sigma*A_w*(T_w**4-Tsky**4) 
+        - h_w_amb*A_w*(T_w-Tamb)
+    )
     # print(F_w_ap,F_t_w, A_t,A_ap,F_t_ap)
     return q_w_net
 
@@ -1539,7 +1543,7 @@ def TPR_2D_model(
     return results, T_p, Rcvr, Rcvr_full
 
 #---------------------
-def get_plant_costs():
+def get_plant_costs() -> dict[str, float | str]:
     Ci = {}
     Ci['R_ftl']  = 1.3                   # Field to land ratio, SolarPilot
     Ci['C_land'] = 2.47                  # USD per m2 of land. SAM/SolarPilot (10000 USD/acre)
@@ -1643,12 +1647,40 @@ def get_storage_cost_dims(T_pH, T_pC, Q_stg, C_parts, HtD_stg, F_stg=1.0):
 
     return F_stg*C_stg_p + C_stg_t, H_stg, V_stg
 
-def get_rcv_cost(F_rcv, C_tpr, Arcv, M_p, H_stg, SM):
+def get_rcv_cost(
+        F_rcv: float,
+        C_tpr: float,
+        Arcv: float,
+        M_p: float,
+        H_stg: float,
+        SM: float) -> float:
     C_rcv_tpr = C_tpr * Arcv
     hlift_CH = H_stg + 2.0
     hlift_HC = H_stg + 5.0
     C_lift = (58.37 * hlift_CH + 58.37 * hlift_HC / SM) * M_p
     return F_rcv * ( C_rcv_tpr + C_lift ) /1e6
+
+def get_lcoh(
+        C_heat: float,
+        C_OM: float,
+        P_rcv: float,
+        CF_sf: float,
+        DR: float,
+        Ny: float) -> float:
+        TPF  = (1./DR)*(1. - 1./(1.+DR)**Ny)
+        P_yr = CF_sf * 8760 * P_rcv  /1e6            #[TWh_th/yr]
+        return C_heat * (1. + C_OM*TPF) / (P_yr * TPF) if P_yr>0 else np.inf
+    
+def get_lcoe(
+        C_elec: float,
+        C_OM: float,
+        P_el: float,
+        CF_pb: float,
+        DR: float,
+        Ny: float) -> float:
+    TPF  = (1./DR)*(1. - 1./(1.+DR)**Ny)
+    E_yr = CF_pb * 8760 * P_el   /1e6            #[TWh_e/yr]
+    return C_elec * (1. + C_OM*TPF) / (E_yr * TPF) if E_yr>0 else np.inf
 
 def BDR_cost(SF,CST):
     
@@ -1777,6 +1809,145 @@ def BDR_cost(SF,CST):
     Co['Elec'] = Ntower*Co['Heat'] +  (Co['PHX']+Co['PB']) * C_xtra
     E_yr       = CF_pb * 8760 * Pel   /1e6            #[TWh_e/yr]
     Co['LCOE'] =  Co['Elec'] * (1. + C_OM*TPF) / (E_yr * TPF)  if E_yr>0 else np.inf
+    return Co
+
+
+def plant_costing_calculations(
+        plant: PlantCSPBeamDownParticle,
+        HB: HyperboloidMirror,
+        TOD: TertiaryOpticalDevice,
+        costs_in: dict,
+        SF: pd.DataFrame,
+):         # ex BDR_cost
+
+    # M_p     = CST['M_p']
+
+    zrc = plant.zrc.get_value("m")
+    A_h1 = plant.Ah1.get_value("m2")
+    T_stg = plant.stg_cap.get_value("hr")
+    SM = plant.solar_multiple.get_value("-")
+    eta_rcv = plant.receiver_eta_des.get_value("-")
+    eta_pb = plant.pb_eta_des.get_value("-")
+    T_pH = plant.stg_temp_hot.get_value("K")
+    T_pC = plant.stg_temp_cold.get_value("K")
+    HtD_stg = plant.stg_h_to_d.get_value("-")
+    Gbn = plant.Gbn.get_value("W/m2")
+    Ntower = plant.Ntower if hasattr(plant,'Ntower') else 1
+
+    S_HB = HB.surface_area.get_value("m2")
+    zmax = HB.zmax.get_value("m")
+
+    S_TOD = TOD.surface_area.get_value("m2")
+    Arcv = TOD.receiver_area.get_value("m2")
+
+    M_p = plant.receiver_massflowrate.get_value("kg/s")
+    
+    #Solar field related costs
+    R_ftl  = costs_in['R_ftl']                   # Field to land ratio, SolarPilot
+    C_land = costs_in['C_land']                  # USD per m2 of land. SAM/SolarPilot (10000 USD/acre)
+    C_site = costs_in['C_site']                 # USD per m2 of heliostat. SAM/SolarPilot
+    C_hel  = costs_in['C_hel']                  # USD per m2 of heliostat. Projected by Pfal et al (2017)
+    C_tpr  = costs_in['C_tpr']                  # [USD/m2]
+    C_tow = costs_in['C_tow']             # USD fixed. SAM/SolarPilot, assumed tower 25% cheaper
+    e_tow = costs_in['e_tow']                 # Scaling factor for tower
+    C_parts = costs_in['C_parts']
+    tow_type = costs_in['tow_type']
+    C_OM = costs_in['C_OM']                    # % of capital costs.
+    DR   = costs_in['DR']                    # Discount rate
+    Ny   = costs_in['Ny']                      # Horizon project
+    C_pb    = costs_in['C_pb']                                #USD/MWe
+    C_PHX   = costs_in['C_PHX'] if 'C_PHX' in costs_in else 0.      #USD/MWe
+    C_xtra = costs_in['C_xtra']                   # Engineering and Contingency
+    
+    #Factors to apply on costs. Usually they are 1.0.
+    F_HB   = costs_in['F_HB']
+    F_TOD  = costs_in['F_TOD']
+    F_rcv  = costs_in['F_rcv']
+    F_tow  = costs_in['F_tow']
+    F_stg  = costs_in['F_stg']
+    
+    # P_rcv = CST['P_rcv_sim'] if 'P_rcv_sim' in CST else CST['P_rcv'] #[MW] Nominal power stored by receiver
+    P_rcv = plant.receiver_power.get_value("MW")  # [MW] Nominal power stored by receiver
+    P_pb  = P_rcv / SM              #[MWth]  Thermal energy delivered to power block
+    Q_stg = P_pb * T_stg            #[MWh]  Energy storage required to meet T_stg
+    
+    Co = {}      #Everything in MM USD, unless explicitely indicated
+    
+    # CAPACITY FACTOR
+    # CF_sf = Capacity Factor (Solar field)
+    # CF_pb = Capacity Factor (Power block)
+    
+    if plant.type_weather == 'TMY':
+        if plant.file_weather is not None:
+            df_w = pd.read_csv(plant.file_weather,header=1)
+            DNI_tag = 'DNI (W/m^2)'
+            DNI_des = Gbn
+            DNI_min = 400.
+            F_sf    = 0.9       #Factor to make it conservative
+            Qacc    = df_w[df_w[DNI_tag]>=DNI_min][DNI_tag].sum()  #In Wh/m2
+            CF_sf  = F_sf * Qacc / (DNI_des*len(df_w))
+            CF_pb = CF_sf*SM
+        else:
+            print('Weather File not found. Default value used for CF_sf')
+            CF_sf  = costs_in['CF_sf']
+            CF_pb = CF_sf*SM                      # Assumed all is converted into electricity
+    elif plant.type_weather == 'MERRA2':  # Not implemented yet.
+        CF_sf  = costs_in['CF_sf']               # Assumes CF_sf is calculated outside and stored
+        CF_pb  = costs_in['CF_pb']               # Assumes CF_pb is calculated outside and stored
+    else:       #If nothing is given, assumed default values
+        CF_sf = costs_in['CF_sf']
+        CF_pb = CF_sf*SM
+    
+    Co['CF_sf'] = CF_sf
+    Co['CF_pb'] = CF_pb
+    
+    # LAND CALCULATIONS
+    S_land, S_hel = get_land_area(SF, A_h1)
+    Co['land'] = ( C_land*S_land*R_ftl + C_site*S_hel )  / 1e6
+    Co['land_prod'] = P_rcv/(S_land/1e4)            #MW/ha
+    
+    # MIRROR MASSES AND COSTS
+    M_HB_fin  = HB.mass_fin.get_value("ton")          # Fins components of HB weight
+    M_HB_t    = HB.mass_total.get_value("ton")        # Total weight of HB
+    F_struc_hel = 0.17
+    zhel        = 4.0
+    
+    C_HB = get_cost_hb(C_hel, M_HB_fin, M_HB_t, F_struc_hel, zhel, zmax)
+    C_TOD = get_cost_tod(C_hel, F_struc_hel, zhel,S_TOD, zrc)
+    M_TOD_t = get_mass_tod(S_TOD)
+    Co['hel'] = C_hel * S_hel /1e6
+    Co['HB']  = F_HB * C_HB * S_HB /1e6
+    Co['TOD'] = F_TOD * C_TOD * S_TOD /1e6
+    
+    # TOWER COST
+    if tow_type == 'Conv':
+        Co['tow'] = C_tow * np.exp(e_tow*zmax)/1e6
+    elif 'Antenna':    
+        Co['tow'] = get_tower_cost_antenna(zmax, zrc, M_HB_t, M_TOD_t, F_tow)  # USD
+    
+    # STORAGE COST
+    C_stg, H_stg, V_stg = get_storage_cost_dims(T_pH, T_pC, Q_stg, C_parts, HtD_stg, F_stg)
+    Co['stg'] = C_stg      #[MM USD]
+    Co['H_stg'] = H_stg
+    Co['V_stg'] = V_stg
+
+    # RECEIVER COST    
+    Co['rcv'] = get_rcv_cost(F_rcv, C_tpr, Arcv, M_p, H_stg, SM)  # USD
+    
+    # TOTAL HEAT COSTS
+    Co['Heat'] = (Co['land'] + Co['hel'] + Co['HB'] + Co['TOD'] + Co['rcv'] + Co['tow'] + Co['stg']) * C_xtra
+    Co['SCH'] = Co['Heat'] / P_rcv if P_rcv>0 else np.inf      #(USD/Wp) Specific cost of Heat (from receiver)
+    
+    #Levelised cost of heat (sun-to-storage)
+    Co['LCOH'] =  get_lcoh(Co['Heat'], C_OM, P_rcv, CF_sf, DR, Ny)  #USD/MWh delivered from receiver
+
+    # Levelised cost of electricity (sun-to-electricity)
+    Pel        = Ntower * eta_pb * P_pb           #[MWe]  Nominal power of power block
+    Co['PB']   = C_pb * Pel / 1e6
+    Co['PHX']  = C_PHX * P_pb / 1e6
+    Co['Elec'] = Ntower*Co['Heat'] +  (Co['PHX']+Co['PB']) * C_xtra
+    Co['LCOE'] =  get_lcoe(Co['Elec'], C_OM, Pel, CF_pb, DR, Ny)  #USD/MWh
+    
     return Co
 
 
@@ -1962,7 +2133,6 @@ def run_coupled_sim(
         HSF: SolarField,
         HB: HyperboloidMirror,
         TOD: TertiaryOpticalDevice,
-    **kwargs
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
 
     #Getting the RayDataset
@@ -1999,20 +2169,6 @@ def run_coupled_sim(
             factor_htc = 2.57
         )
         rcvr_output = receiver.run_model(TOD,SF,R2)
-    elif type_rcv=='TPR_2D':
-        results, T_p, _, _ = TPR_2D_model(CST, R2, SF, TOD, full_output=True)
-        N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, M_p, t_res, vel_p, it, solve_t_res = results
-        rcvr_output = {
-            "temps_parts": T_p,
-            "n_hels": N_hel,
-            "rad_flux_max": Q_max,
-            "rad_flux_avg": Q_av,
-            "heat_stored": Qstg,
-            "eta_rcv": eta_rcv,
-            "mass_stg": M_p,
-            "time_res": t_res,
-            "vel_p": vel_p
-        }
     elif type_rcv=='HPR_0D':
         receiver = HPR0D(
             nom_power =plant.receiver_power.get_value("MW"),
@@ -2024,25 +2180,39 @@ def run_coupled_sim(
             factor_htc = 2.57
         )
         rcvr_output = receiver.run_model(SF)
-    elif type_rcv=='TPR_0D':
-        rcvr_output = rcvr_TPR_0D_corr(CST, TOD, SF)
-    elif type_rcv in ['SEVR','None']:
-        Prcv, eta_rcv, Qavg = CST['P_rcv'], CST['eta_rcv'], CST["Qavg"]
-        P_bdr = Prcv / eta_rcv
-        Q_acc    = SF['Q_h1'].cumsum()
-        N_hel    = len( Q_acc[ Q_acc < P_bdr ] ) + 1
+    # elif type_rcv=='TPR_2D':
+    #     results, T_p, _, _ = TPR_2D_model(CST, R2, SF, TOD, full_output=True)
+    #     N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, M_p, t_res, vel_p, it, solve_t_res = results
+    #     rcvr_output = {
+    #         "temps_parts": T_p,
+    #         "n_hels": N_hel,
+    #         "rad_flux_max": Q_max,
+    #         "rad_flux_avg": Q_av,
+    #         "heat_stored": Qstg,
+    #         "eta_rcv": eta_rcv,
+    #         "mass_stg": M_p,
+    #         "time_res": t_res,
+    #         "vel_p": vel_p
+    #     }
+    # elif type_rcv=='TPR_0D':
+    #     rcvr_output = rcvr_TPR_0D_corr(CST, TOD, SF)
+    # elif type_rcv in ['SEVR','None']:
+    #     Prcv, eta_rcv, Qavg = CST['P_rcv'], CST['eta_rcv'], CST["Qavg"]
+    #     P_bdr = Prcv / eta_rcv
+    #     Q_acc    = SF['Q_h1'].cumsum()
+    #     N_hel    = len( Q_acc[ Q_acc < P_bdr ] ) + 1
 
-        rcvr_output = {
-            "temps_parts" : plant.stg_temp_hot.get_value("K"),
-            "n_hels" : len( Q_acc[ Q_acc < P_bdr ] ) + 1,
-            "rad_flux_max" : np.nan,            #No calculated
-            "rad_flux_avg" : Qavg,
-            "heat_stored": np.nan,            #No calculated
-            "eta_rcv": eta_rcv,
-            "mass_stg": np.nan,
-            "time_res": np.nan,
-            "vel_p": np.nan,
-        }
+    #     rcvr_output = {
+    #         "temps_parts" : plant.stg_temp_hot.get_value("K"),
+    #         "n_hels" : len( Q_acc[ Q_acc < P_bdr ] ) + 1,
+    #         "rad_flux_max" : np.nan,            #No calculated
+    #         "rad_flux_avg" : Qavg,
+    #         "heat_stored": np.nan,            #No calculated
+    #         "eta_rcv": eta_rcv,
+    #         "mass_stg": np.nan,
+    #         "time_res": np.nan,
+    #         "vel_p": np.nan,
+    #     }
     else:
         raise ValueError(f"Receiver type '{type_rcv}' not recognized. Use 'HPR_2D', 'TPR_2D', 'HPR_0D', 'TPR_0D', 'SEVR' or 'None'.")
 
@@ -2053,34 +2223,20 @@ def run_coupled_sim(
     eta_rcv = rcvr_output["eta_rcv"]
 
     # Outputs
-    #Receiver Parameters
-    CST['T_p']     = rcvr_output["temps_parts"]
-    CST['eta_rcv'] = rcvr_output["eta_rcv"]
-    CST['Q_max']   = rcvr_output["rad_flux_max"]
-    CST['Q_av']    = rcvr_output["rad_flux_avg"]
-    CST['t_res']   = rcvr_output["time_res"]
-    
-    #Storage parameters
-    CST['M_p']   = M_p
-    CST['Q_stg'] = Qstg
-    
-    #General parameters
-    Prcv,eta_pb,SM = [CST[x] for x in ['P_rcv', 'eta_pb', 'SM']]
-    CST['P_pb']  = (Prcv / SM)
-    CST['P_el']  = (Prcv / SM) * eta_pb
-    CST['P_SF']  = Prcv / eta_rcv
-    
-    A_h1,eta_pb = [CST[x] for x in ['A_h1', 'eta_pb']]
     
     # Heliostat selection
+    Gbn = plant.Gbn.get_value("W/m2")
+    A_h1 = plant.Ah1.get_value("m2")
     Q_acc    = SF['Q_h1'].cumsum()
     hlst     = Q_acc.iloc[:N_hel].index
     SF['hel_in'] = SF.index.isin(hlst)
     R2['hel_in'] = R2['hel'].isin(hlst)
-    CST['N_hel'] = N_hel
-    CST['P_SF_sim']  = SF[SF.hel_in]['Q_h1'].sum()
-    CST['P_rcv_sim'] = CST['P_SF_sim'] * eta_rcv
-    CST['P_el_sim']  = CST['P_rcv_sim'] * eta_pb
+
+    plant.sf_n_hels = Variable(N_hel, "-")
+    plant.sf_power  = Variable( SF[SF.hel_in]['Q_h1'].sum(), "MW")
+    plant.receiver_power = Variable(plant.sf_power.v * eta_rcv, "MW")
+    plant.sf_area = Variable(N_hel * A_h1, "m2")
+    plant.receiver_massflowrate = Variable(M_p, "kg/s")
     
     # Calculating HB surface
     HB.rmin = Variable(R2[R2.hel_in]['rb'].quantile(0.0001), "m")
@@ -2089,24 +2245,10 @@ def run_coupled_sim(
     
     HB.update_geometry(R2)
     HB.height_range()
-    
-    #Masses of mirrors
-    M_HB_fin, M_HB_mirr, M_HB_str, M_HB_tot = BDR.HB_mass_cooling(R2, CST, SF)
-    
-    # Final parameters for mirrors
-    CST['rmin'] = HB.rmin
-    CST['rmax'] = HB.rmax
-    CST['zmin'] = HB.zmin
-    CST['zmax'] = HB.zmax
-    CST['S_HB']  = HB.area.v
-    CST['S_TOD'] = TOD.surface_area.v
-    CST['S_SF']  = N_hel*A_h1
-    CST['S_tot'] = CST['S_HB'] + CST['S_TOD'] + CST['S_SF']
-    
-    CST['M_HB_fin'] = M_HB_fin
-    CST['M_HB_tot'] = M_HB_tot
+    HB.calculate_mass(R2, SF, Gbn, A_h1)
     
     #Costing calculation
-    CST['Costs'] = BDR_cost(SF,CST)
+    costs_in = get_plant_costs()
+    costs_out = plant_costing_calculations(plant, HB, TOD, costs_in, SF)
     
-    return R2, SF, CST
+    return R2, SF, costs_out

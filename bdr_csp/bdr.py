@@ -141,13 +141,19 @@ class HyperboloidMirror():
     yrc: Variable = Variable(0.0, "m")
     zrc: Variable = Variable(0.0, "m")
     eta_hbi: Variable = Variable(0.95, "-")
+    eta_rfl: Variable = Variable(0.95, "-")
 
     #output
     rmin: Variable = Variable(None,"m")
     rmax: Variable = Variable(None,"m")
-    area: Variable = Variable(None,"m")
     zmin: Variable = Variable(None,"m")
     zmax: Variable = Variable(None,"m")
+    surface_area: Variable = Variable(None,"m2")
+
+    mass_total = Variable(None,"kg")
+    mass_mirror = Variable(None,"kg")
+    mass_structure = Variable(None,"kg")
+    mass_fin = Variable(None,"kg")
 
     @property
     def zv(self) -> Variable:
@@ -212,7 +218,7 @@ class HyperboloidMirror():
         surface_area = quad(S_int,rmin,rmax)[0]
         self.rmin = Variable(rmin,"m")
         self.rmax = Variable(rmax,"m")
-        self.area = Variable(surface_area,"m2")
+        self.surface_area = Variable(surface_area,"m2")
         return None
 
 
@@ -452,6 +458,100 @@ class HyperboloidMirror():
             SF['f_sh'] = SF['r_sh']
 
         return SF
+    
+    def calculate_mass(
+        self,
+        R2: pd.DataFrame,
+        SF: pd.DataFrame,
+        Gbn: float = 950,
+        A_h1: float = 2.92**2,
+    ) -> None:
+
+        rmin = self.rmin.get_value("m")
+        rmax = self.rmax.get_value("m")
+        eta_rfl = self.eta_rfl.get_value("-")
+
+        Etas = SF[SF['hel_in']].mean()
+        hlst = SF[SF.hel_in].index
+        N_hel = len(hlst)
+        
+        out  = R2[(R2['hel_in'])&(R2['hit_hb'])]
+        xmin = out['xb'].min()
+        xmax = out['xb'].max()
+        ymin = out['yb'].min()
+        ymax = out['yb'].max()
+        Nx = 100
+        Ny = 100
+        dx = (xmax-xmin)/Nx
+        dy = (ymax-ymin)/Nx
+        dA = dx*dy
+        Q_HB,X,Y = np.histogram2d(
+            out['xb'], out['yb'], 
+            bins = [Nx,Ny],
+            range = [[xmin, xmax], [ymin, ymax]],
+            density = False
+        )
+        X2, Y2 = np.meshgrid(X, Y)
+        Xc = np.array(
+            [ [(X2[i,j] + X2[i,j+1])/2 for j in range(Ny)] for i in range(Nx) ]
+        )
+        Yc = np.array(
+            [ [(Y2[i,j]+Y2[i+1,j])/2 for j in range(Ny)] for i in range(Nx) ]
+        )
+        
+        def HB_dAs(
+                X: np.ndarray,
+                Y: np.ndarray,
+                HB: HyperboloidMirror
+            ) -> np.ndarray:
+            
+            zf = HB.zf.get_value("m")
+            fzv = HB.fzv.get_value("-")
+            zrc = HB.zrc.get_value("m")
+            yrc = HB.yrc.get_value("m")
+            zfh,zvh = zf-zrc, fzv*zf-zrc
+            fvh = zvh/zfh
+            c = zfh/2
+            a = c*( 2*fvh - 1 )
+            b = 2*c*np.sqrt(fvh - fvh**2)
+            R = np.sqrt(X**2+Y**2)
+            Z = np.sqrt( R**2/b**2 + 1 )*a
+            dA = np.sqrt( (a/b)**4 * (R/Z)**2 + 1)
+            return dA
+        
+        dS_HB = HB_dAs(Xc, Yc, self) * dx * dy
+        Rc = np.sqrt( Xc**2 + Yc**2 )
+        S_HB = dS_HB[(Rc>rmin)&(Rc<rmax)].sum()
+        Fbin = (
+            eta_rfl*Etas['Eta_cos']*Etas['Eta_blk']
+            * Gbn * A_h1 * N_hel
+            /(1e3*dS_HB*len(out))
+        ) 
+        Q_HB = Fbin * Q_HB
+        
+        Q_HB_tot = (Q_HB*dS_HB).sum()               #kW
+        Q_HB_abs = Q_HB_tot*(1-eta_rfl)      #kw
+        Q_HB_cool_avg = Q_HB_abs/S_HB               #kW/m2
+        Q_HB_worst = Q_HB.max()*(1-eta_rfl)  #kW/m2
+        dT_mirr   = 70.                             #K
+        
+        HTC_max = 1e3 * Q_HB_worst / dT_mirr             #W/m2-K
+        HTC_avg = 1e3 * Q_HB_cool_avg / dT_mirr          #W/m2-K
+        
+        [N_fin,M_fin,M_mirror,M_beams,M_total,rAf,rMf] = HB_cooling_calc(Q_HB,eta_rfl)
+
+        N_fin_tot = (N_fin*dS_HB)[(Rc>rmin) & (Rc<rmax)].sum()
+        M_fin_tot = (M_fin*dS_HB)[(Rc>rmin) & (Rc<rmax)].sum() /1e3   #[tonnes]
+        M_mirr_tot = M_mirror*S_HB / 1e3                                          #[tonnes]
+        M_str_tot = M_beams*S_HB / 1e3                                            #[tonnes]
+        M_HB_tot  = M_fin_tot + M_mirr_tot + M_str_tot                            #[tonnes]
+        
+        self.mass_total = Variable(M_HB_tot, "ton")
+        self.mass_mirror = Variable(M_mirr_tot, "ton")
+        self.mass_structure = Variable(M_str_tot, "ton")
+        self.mass_fin = Variable(M_fin_tot, "ton")
+
+        return None
 
 @dataclass
 class TertiaryOpticalDevice():
@@ -841,7 +941,10 @@ class TertiaryOpticalDevice():
                 xc = xc[~hit]
                 yc = yc[~hit]
             R1['hit_tod'] = np.where(R1['Npolygon']>0,True,False)
-        
+        else:
+            zV = np.nan
+            zA = np.nan
+            zO = np.nan
         
         #INITIAL DF
         R2 = R1[R1['hit_tod']][[
@@ -1004,6 +1107,10 @@ class TertiaryOpticalDevice():
                     - PB_Z(R2['xs'],R2['ys']-h,V_TOD,R2['xo'],R2['yo'])
                     ) / (2*h)
                 ddz = -1
+            else:
+                ddx = np.nan
+                ddy = np.nan
+                ddz = np.nan
                 
             #Calculating perfect reflections
             nn = (ddx**2+ddy**2+ddz**2)**0.5
@@ -1385,10 +1492,9 @@ def CST_BaseCase(**kwargs) -> dict[str, Any]:
 
 def HB_cooling_calc(
         qin: float,
-        CST: dict
+        eta_rfl: float = 0.95,
     ) -> list[float]:
     
-    rfl      = CST['eta_rfl']
     FoS      = 2.0                           #Factor of Safety
     A_s      = 1.                            #Calculations per m2
     dT_adm   = 100-30                        #Admisible delta T [°C]
@@ -1420,7 +1526,7 @@ def HB_cooling_calc(
     Lc = L_fin + D_fin/4.
     eta_fin = np.tanh(m*Lc) / (m*Lc)    #Fin Efficiency
     
-    q_dis   = FoS * qin * (1-rfl) * 1e3      #Heat to dissipate [W/m2]
+    q_dis   = FoS * qin * (1-eta_rfl) * 1e3      #Heat to dissipate [W/m2]
     
     dT_glue = q_dis * t_glue / k_glue
     dT_al   = q_dis * t_al / k_al
@@ -1452,24 +1558,29 @@ def HB_cooling_calc(
 
 
 def HB_mass_cooling(
+        HB: HyperboloidMirror,
         R2: pd.DataFrame,
-        CST: dict,
         SF: pd.DataFrame,
+        Gbn: float = 950,
+        A_h1: float = 2.92**2,
         full_results: bool = False
     ) -> tuple[tuple,tuple] | tuple:
+
+    rmin = HB.rmin.get_value("m")
+    rmax = HB.rmax.get_value("m")
+    eta_rfl = HB.eta_rfl.get_value("-")
+
     Etas = SF[SF['hel_in']].mean()
     hlst = SF[SF.hel_in].index
     N_hel = len(hlst)
-    
-    rmin = CST['rmin']
-    rmax = CST['rmax']
     
     out  = R2[(R2['hel_in'])&(R2['hit_hb'])]
     xmin = out['xb'].min()
     xmax = out['xb'].max()
     ymin = out['yb'].min()
     ymax = out['yb'].max()
-    Nx = 100; Ny = 100
+    Nx = 100
+    Ny = 100
     dx = (xmax-xmin)/Nx
     dy = (ymax-ymin)/Nx
     dA = dx*dy
@@ -1490,45 +1601,46 @@ def HB_mass_cooling(
     def HB_dAs(
             X: np.ndarray,
             Y: np.ndarray,
-            CST: dict
+            HB: HyperboloidMirror
         ) -> np.ndarray:
         
-        zf,fzv,zrc,yrc = [CST[x] for x in ['zf','fzv','zrc','yrc']]
+        zf = HB.zf.get_value("m")
+        fzv = HB.fzv.get_value("-")
+        zrc = HB.zrc.get_value("m")
+        yrc = HB.yrc.get_value("m")
         zfh,zvh = zf-zrc, fzv*zf-zrc
-        fvh     = zvh/zfh
-        c       = zfh/2
-        a , b   = c*( 2*fvh - 1 ) , 2*c*np.sqrt(fvh - fvh**2)
-        
+        fvh = zvh/zfh
+        c = zfh/2
+        a = c*( 2*fvh - 1 )
+        b = 2*c*np.sqrt(fvh - fvh**2)
         R = np.sqrt(X**2+Y**2)
         Z = np.sqrt( R**2/b**2 + 1 )*a
         dA = np.sqrt( (a/b)**4 * (R/Z)**2 + 1)
-        
         return dA
     
-    dS_HB = HB_dAs(Xc,Yc,CST)*dx*dy
+    dS_HB = HB_dAs(Xc, Yc, HB) * dx * dy
     Rc = np.sqrt( Xc**2 + Yc**2 )
-    S_HB = dS_HB[(Rc>CST['rmin'])&(Rc<CST['rmax'])].sum()
+    S_HB = dS_HB[(Rc>rmin)&(Rc<rmax)].sum()
     Fbin = (
-        CST['eta_rfl']*Etas['Eta_cos']*Etas['Eta_blk']
-        *(CST['Gbn']*CST['A_h1']*N_hel)
+        eta_rfl*Etas['Eta_cos']*Etas['Eta_blk']
+        * Gbn * A_h1 * N_hel
         /(1e3*dS_HB*len(out))
     ) 
     Q_HB = Fbin * Q_HB
     
     Q_HB_tot = (Q_HB*dS_HB).sum()               #kW
-    Q_HB_abs = Q_HB_tot*(1-CST['eta_rfl'])      #kw
+    Q_HB_abs = Q_HB_tot*(1-eta_rfl)      #kw
     Q_HB_cool_avg = Q_HB_abs/S_HB               #kW/m2
-    Q_HB_worst = Q_HB.max()*(1-CST['eta_rfl'])  #kW/m2
+    Q_HB_worst = Q_HB.max()*(1-eta_rfl)  #kW/m2
     dT_mirr   = 70.                             #K
     
     HTC_max = 1e3 * Q_HB_worst / dT_mirr             #W/m2-K
     HTC_avg = 1e3 * Q_HB_cool_avg / dT_mirr          #W/m2-K
     
-    
-    [N_fin,M_fin,M_mirror,M_beams,M_total,rAf,rMf] = HB_cooling_calc(Q_HB,CST)
+    [N_fin,M_fin,M_mirror,M_beams,M_total,rAf,rMf] = HB_cooling_calc(Q_HB,eta_rfl)
 
-    N_fin_tot = (N_fin*dS_HB)[(Rc>CST['rmin'])&(Rc<CST['rmax'])].sum()
-    M_fin_tot = (M_fin*dS_HB)[(Rc>CST['rmin'])&(Rc<CST['rmax'])].sum() /1e3   #[tonnes]
+    N_fin_tot = (N_fin*dS_HB)[(Rc>rmin) & (Rc<rmax)].sum()
+    M_fin_tot = (M_fin*dS_HB)[(Rc>rmin) & (Rc<rmax)].sum() /1e3   #[tonnes]
     M_mirr_tot = M_mirror*S_HB / 1e3                                          #[tonnes]
     M_str_tot = M_beams*S_HB / 1e3                                            #[tonnes]
     M_HB_tot  = M_fin_tot + M_mirr_tot + M_str_tot                            #[tonnes]

@@ -85,10 +85,10 @@ def dispatch_single_case(
     out = ppc.annual_performance(plant, df)
     date_sim = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime())
     data.append([Ntower, stg_cap, solar_multiple, receiver_power, 
-                 pb_power_el] + [out[x] for x in COLS_OUTPUT] + [date_sim])
+                 pb_power_el] + [out[x].v for x in COLS_OUTPUT] + [date_sim])
     print('\t'.join('{:8.3f}'.format(x) for x in data[-1][:-1]))
     
-    return pd.DataFrame(data,columns=COLS_INPUT + COLS_OUTPUT)
+    return pd.DataFrame(data,columns=COLS_INPUT + COLS_OUTPUT + ["date_sim"])
 
 
 def main():
@@ -99,8 +99,7 @@ def main():
         receiver_power = Variable(19.,"MW"),
         flux_avg = Variable(1.25,"MW/m2"),
     )
-    CSTo, R2, SF = plant.run_thermal_subsystem()
-
+    costs_out, R2, SF = plant.run_thermal_subsystem()
     results = dispatch_single_case(plant)
 
     return
