@@ -44,6 +44,8 @@ class BlackboxModel():
             h_conv = Fc * htc.h_conv_Holman(temp, temp_amb, 0.01, air)
         elif HTC == 'Experiment':
             h_conv = Fc * htc.h_conv_Experiment(temp, temp_amb, 0.1, air)
+        else:
+            raise ValueError(f"Unknown HTC model: {HTC}")
 
         if view_factor is None:
             view_factor = 1.0        
@@ -56,7 +58,7 @@ class BlackboxModel():
         else:
             eta_rcv = (flux*1e6*ab_p - q_loss)/(flux*1e6)
         if eta_rcv<0:
-            eta_rcv == 0.
+            eta_rcv = 0.
 
         output = {
             "eta_rcv": eta_rcv,

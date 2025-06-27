@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from os.path import isfile
-from typing import Callable
+from typing import Callable, Union
 import os
 import pickle
 import time
@@ -15,11 +15,13 @@ from pvlib.location import Location
 from scipy.interpolate import interp2d
 from scipy.interpolate import RegularGridInterpolator, LinearNDInterpolator
 
-from antupy.units import Variable
+from antupy.units import Variable, conversion_factor as CF
 import bdr_csp.bdr as bdr
 import bdr_csp.spr as spr
 import bdr_csp.htc as htc
 from bdr_csp.dir import DIRECTORY
+
+ParticleReceiver = Union[spr.HPR0D, spr.HPR2D]
 
 pd.set_option('display.max_columns', None)
 
@@ -35,7 +37,7 @@ COLS_INPUT = [
     'n_tower',
     'temp_stg',
     'solar_multiple',
-    'receiver_power'
+    'rcv_power'
 ]
 COLS_OUTPUT = [
     'stg_heat_stored',
@@ -46,7 +48,7 @@ COLS_OUTPUT = [
     'revenue_daily',
     'lcoh',
     'lcoe', 
-    'pb_capital',
+    'pb_cost',
     'cost_capital',
     'roi',
     'payback_period',
@@ -58,17 +60,17 @@ COLS_OUTPUT = [
 class PlantCSPBeamDownParticle():
     zf: Variable = Variable(50, "m")
     fzv: Variable  = Variable(0.818161, "-")
-    receiver_power: Variable = Variable(19.,"MW")
+    rcv_power: Variable = Variable(19.,"MW")
     flux_avg: Variable = Variable(1.25,"MW/m2")
     xrc: Variable = Variable(0., "m")
     yrc: Variable = Variable(0., "m")
     zrc: Variable = Variable(10., "m")
-    Ah1: Variable = Variable(2.92**2, "m2")
-    Npan: int = 1
+
+    # BDR parameters
     geometry: str = "PB"
     array: str = "A"
     Cg: Variable = Variable(2, "-")
-    receiver_area: Variable = Variable(20., "m2")
+    rcv_area: Variable = Variable(20., "m2")
 
     cost_input: dict[str, float|str] = field(default_factory=spr.get_plant_costs)
 
@@ -87,95 +89,180 @@ class PlantCSPBeamDownParticle():
     eta_rfl: Variable = Variable(0.95, "-")              # Includes mirror refl, soiling and refl. surf. ratio. Used also for HB and TOD
     err_tot: Variable = Variable(0.002, "-")             # [rad] Total reflected error
     type_shadow = 'simple'                               # Type of shadow modelling
+    Ah1: Variable = Variable(2.92**2, "m2")
+    Npan: int = 1
 
     ### Receiver and Storage Tank characteristics
-    receiver_type: str = 'HPR_0D'                            # model for Receiver
-    receiver_flux_max: Variable = Variable(3.0, "MW/m2")     # Maximum radiation flux on receiver
+    rcv_type: str = 'HPR_0D'                            # model for Receiver
+    rcv_flux_max: Variable = Variable(3.0, "MW/m2")     # Maximum radiation flux on receiver
     stg_temp_cold: Variable = Variable(950,"K")              # particle temperature in cold tank
     stg_temp_hot: Variable = Variable(1200,"K")              # particle temperature in hot tank
-    stg_material: str  = 'CARBO'                        # Thermal Storage Material
-    stg_thickness: Variable = Variable(0.05, "m")  # Thickness of material on conveyor belt
-    stg_cap: Variable = Variable(8., "hr")          # Hours of storage
-    stg_h_to_d: Variable = Variable(0.5, "-")                 # [-] height to diameter ratio for storage tank
-    solar_multiple: Variable = Variable(2.0, "-")             # [-] Initial target for solar multiple
+    stg_material: str  = 'CARBO'                             # Thermal Storage Material
+    stg_thickness: Variable = Variable(0.05, "m")            # Thickness of material on conveyor belt
+    stg_cap: Variable = Variable(8., "hr")                   # Hours of storage
+    stg_h_to_d: Variable = Variable(0.5, "-")                # [-] height to diameter ratio for storage tank
+    solar_multiple: Variable = Variable(2.0, "-")            # [-] Initial target for solar multiple
     
-    # Receiver and Power Block efficiencies
+    # Heat exchanger and Power Block efficiencies
+    hx_u = Variable(240., "W/m2-K")                             #Value from DLR design
     pb_temp_max: Variable = Variable(875 + 273.15,"K")         #[K] Maximum temperature un power block cycle
     Ntower: int = 1                                            #[-] Number of towers feeding one power block 
     pb_eta_des: Variable = Variable(0.50,"-")                  #[-] Power Block efficiency target (initial value) 
-    stg_eta_des: Variable = Variable(1.00,"-")                  #[-] Storage efficiency target (assumed 1 for now)
-    receiver_eta_des: Variable = Variable(0.75, "-")                #[-] Receiver efficiency target (initial value)
+    stg_eta_des: Variable = Variable(1.00,"-")                 #[-] Storage efficiency target (assumed 1 for now)
+    # rcv_eta_des: Variable = Variable(0.75, "-")           #[-] Receiver efficiency target (initial value)
 
 
-    # Outputs
-    sf_n_hels = Variable(None, "-")                     # Number of heliostats
-    sf_area = Variable(None, "m2")                     # Solar Field area
-    sf_power = Variable(None, "MW")                     # Solar Field power (output)
+    def __post_init__(self):
+        # Outputs
+        self.sf_n_hels = Variable(None, "-")                     # Number of heliostats
+        self.sf_area = Variable(None, "m2")                     # Solar Field area
+        self.sf_power = Variable(None, "MW")                     # Solar Field power (output)
 
-    pb_power_th: Variable = Variable(None, "MW")                       # Power Block thermal power (input)
-    pb_power_el: Variable = Variable(None, "MW")                       # Power Block electrical power (output)
-    storage_heat: Variable = Variable(None, "MWh")                     # Storage heat (output)
+        self.pb_power_th: Variable = Variable(None, "MW")        # Power Block thermal power (input)
+        self.pb_power_el: Variable = Variable(None, "MW")        # Power Block electrical power (output)
+        self.storage_heat: Variable = Variable(None, "MWh")      # Storage heat (output)
 
-    receiver_massflowrate: Variable = Variable(None, "kg/s")  # Receiver mass flow rate (to be calculated)
-    costs_out : dict[str, float] = field(default_factory=dict)  # Costs output from simulation
+        self.rcv_massflowrate: Variable = Variable(None, "kg/s")  # Receiver mass flow rate (to be calculated)
+        self.costs_out : dict[str, float] = {}  # Costs output from simulation
 
-    def run_thermal_subsystem(
-            self,
-            save_detailed_results: bool = False,
-    ) -> tuple[dict,pd.DataFrame, pd.DataFrame]:
-        
-        zf = self.zf
-        Ah1 = self.Ah1
-        Npan = self.Npan
-        fzv = self.fzv
-        xrc = self.xrc
-        yrc = self.yrc
-        zrc = self.zrc
-        eta_hbi = self.eta_rfl
-        geometry = self.geometry
-        array = self.array
-        Cg = self.Cg
+        # Creating the derived objects and calculating derived attributes
+        flux_avg = self.flux_avg.u("MW/m2")
+        rcv_power = self.rcv_power.u("MW")
+        temp_avg = (self.stg_temp_cold.u("K") + self.stg_temp_hot.u("K")) / 2
 
-        flux_avg = self.flux_avg.get_value("MW/m2")
-        receiver_power = self.receiver_power.get_value("MW")
-        temp_avg = (self.stg_temp_cold.get_value("K") + self.stg_temp_hot.get_value("K")) / 2
-        
-        eta_receiver = Variable(
-            spr.HTM_0D_blackbox( temp_avg, flux_avg )[0], "-"
-        )
-        receiver_area = Variable((receiver_power / eta_receiver.v) / flux_avg, "m2")
-
-        self.eta_rcv_des = eta_receiver
-        self.receiver_area = receiver_area
+        self.rcv_eta_des = Variable( spr.HTM_0D_blackbox( temp_avg, flux_avg )[0], "-" )
+        self.rcv_area = Variable((rcv_power / self.rcv_eta_des.u("-")) / flux_avg, "m2")
 
         file_SF = os.path.join(
             DIR_DATA,
             'mcrt_datasets_final',
-            'Dataset_zf_{:.0f}'.format(zf.v)
+            'Dataset_zf_{:.0f}'.format(self.zf.u("m"))
         )
         self.file_weather = os.path.join(
-            DIR_DATA,
-            'weather',
-            "Alice_Springs_Real2000_Created20130430.csv"
+            DIR_DATA, 'weather', "Alice_Springs_Real2000_Created20130430.csv"
         )
-        HSF = bdr.SolarField(zf=zf, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
-        HB = bdr.HyperboloidMirror(
-            zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=eta_hbi
+        self.HSF = bdr.SolarField(zf=self.zf, A_h1=self.Ah1, N_pan=self.Npan, file_SF=file_SF)
+        self.HB = bdr.HyperboloidMirror(
+            zf=self.zf, fzv=self.fzv, xrc=self.xrc, yrc=self.yrc, zrc=self.zrc, eta_hbi=self.eta_rfl
         )
-        TOD = bdr.TertiaryOpticalDevice(
-            geometry = geometry, array = array, Cg=Cg, receiver_area= receiver_area,
-            xrc=xrc, yrc=yrc, zrc=zrc,
+        self.TOD = bdr.TertiaryOpticalDevice(
+            geometry = self.geometry, array = self.array, Cg=self.Cg, receiver_area= self.rcv_area,
+            xrc=self.xrc, yrc=self.yrc, zrc=self.zrc,
         )
 
-        self.type_receiver = 'HPR_0D'
-        R2, SF, costs_out = spr.run_coupled_sim(self, HSF, HB, TOD)
+        self.receiver = self.select_receiver(self.rcv_type)
+    
+
+    def select_receiver(self, type_: str) -> ParticleReceiver:
+        """
+        Factory method to select the receiver type.
+        """
+        if type_ == 'HPR_2D':
+            return spr.HPR2D(
+                rcv_nom_power=self.rcv_power,
+                heat_flux_avg=self.flux_avg,
+                temp_ini=self.stg_temp_cold,
+                temp_out=self.stg_temp_hot,
+                thickness_parts=self.stg_thickness,
+            )
+        elif type_ == 'HPR_0D':
+            return spr.HPR0D(
+                rcv_nom_power=self.rcv_power,
+                heat_flux_avg=self.flux_avg,
+                temp_ini=self.stg_temp_cold,
+                temp_out=self.stg_temp_hot,
+                thickness_parts=self.stg_thickness,
+            )
+        elif type_ == "TPR_0D":
+            raise ValueError("Receiver type {type_} is not implemented yet.")
+        elif type_ == "TPR_2D":
+            raise ValueError("Receiver type {type_} is not implemented yet.")
+        else:
+            raise ValueError(f"Receiver type '{type_}' not recognized. Use 'HPR_2D' or 'HPR_0D'.")
+
+    def run_thermal_subsystem(
+            self,
+            # save_detailed_results: bool = False,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         
-        self.costs_out = costs_out
 
-        if save_detailed_results:
-            pickle.dump([costs_out,R2,SF,TOD],open(file_base_case,'wb'))
+        # R2, SF, costs_out = spr.run_coupled_sim(self) #, self.HSF, self.HB, self.TOD)
+        # self.costs_out = costs_out
 
-        return costs_out, R2, SF
+        HSF = self.HSF
+        HB = self.HB
+        TOD = self.TOD
+
+        #Getting the RayDataset
+        R0, SF = HSF.load_dataset(save_plk=True)
+
+        #Getting interceptions with HB
+        R1 = HB.mcrt_direct(R0, refl_error=True)
+        R1['hel_in'] = True
+        HB.rmin = Variable( R1['rb'].quantile(0.0001), "m")
+        HB.rmax = Variable( R1['rb'].quantile(0.9981), "m")
+        R1['hit_hb'] = (R1['rb']>HB.rmin.u("m")) & (R1['rb']<HB.rmax.u("m"))
+        
+        SF = HB.shadow_simple(
+            lat=self.lat.v, lng=self.lng.v, type_shdw="simple", SF=SF
+        )
+        
+        #Interceptions with TOD
+        R2 = TOD.mcrt_solver(R1, refl_error=False)
+        
+        ### Optical Efficiencies
+        SF = bdr.optical_efficiencies(self,R2,SF)
+        
+        ### Running receiver simulation and getting the results
+        receiver = self.receiver
+        if isinstance(receiver, spr.HPR2D):
+            receiver.run_model(TOD,SF,R2)
+        elif isinstance(receiver, spr.HPR0D):
+            receiver.run_model(SF)
+        else:
+            raise ValueError(f"Receiver type '{self.rcv_type}' not recognized or not implemented.")
+
+        T_p = receiver.temps_parts
+        N_hel = receiver.n_hels.u("-")
+        Qstg = receiver.heat_stored.u("MWh")
+        M_p = receiver.mass_stg.u("kg/s")
+        eta_rcv = receiver.eta_rcv.u("-")
+
+        # Heliostat selection
+        Gbn = self.Gbn.u("W/m2")
+        A_h1 = self.Ah1.u("m2")
+        Q_acc    = SF['Q_h1'].cumsum()
+        hlst     = Q_acc.iloc[:N_hel].index
+        SF['hel_in'] = SF.index.isin(hlst)
+        R2['hel_in'] = R2['hel'].isin(hlst)
+        
+        # Outputs
+        self.sf_n_hels = Variable(N_hel, "-")
+        self.sf_power  = Variable( SF[SF.hel_in]['Q_h1'].sum(), "MW")
+        self.rcv_power = Variable(self.sf_power.v * eta_rcv, "MW")
+        self.sf_area = Variable(N_hel * A_h1, "m2")
+        self.rcv_massflowrate = Variable(M_p, "kg/s")
+        
+        # Calculating HB surface
+        HB.rmin = Variable(R2[R2.hel_in]['rb'].quantile(0.0001), "m")
+        HB.rmax = Variable(R2[R2.hel_in]['rb'].quantile(0.9981), "m")
+        R2['hit_hb'] = (R2['rb']>HB.rmin.v)&(R2['rb']<HB.rmax.v)
+        
+        HB.update_geometry(R2)
+        HB.height_range()
+        HB.calculate_mass(R2, SF, Gbn, A_h1)
+        
+        #Costing calculation
+        self.costs_out = spr.plant_costing_calculations(self, SF) # HB, TOD, costs_in, SF)
+        
+        # if save_detailed_results:
+        #     pickle.dump([costs_out,R2,SF,TOD],open(file_base_case,'wb'))
+
+        print(HB.surface_area.u("m2"))
+        print(self.HB.surface_area.u("m2"))
+
+        return R2, SF
+
 
     def eta_optical_hourly(
             self,
@@ -184,7 +271,7 @@ class PlantCSPBeamDownParticle():
             lbl: str ='eta_SF'
         ) -> np.ndarray:
 
-        latitude = self.lat.get_value("deg")
+        latitude = self.lat.u("deg")
         # getting the efficiency grid from the file
         df_grid = pd.read_csv(file_alt_azi,header=0,index_col=0)
         df_grid.sort_values(by=['lat','alt','azi'],axis=0,inplace=True)
@@ -218,16 +305,15 @@ class PlantCSPBeamDownParticle():
         if func_receiver is None:
             raise ValueError("Receiver efficiency function not provided.")
         
-        A_SF = self.sf_area.get_value("m2")
-        temp_parts_avg = (self.stg_temp_cold.get_value("K") + self.stg_temp_hot.get_value("K")) / 2
-        area_rcv = self.receiver_area.get_value("m2")
+        sf_area = self.sf_area.u("m2")
+        temp_parts_avg = (self.stg_temp_cold.u("K") + self.stg_temp_hot.u("K")) / 2
+        rcv_area = self.rcv_area.u("m2")
         Npoints = len(df)
 
-        T_pavgs = temp_parts_avg * np.ones(Npoints)
-        TambsK = df["temp_amb"].to_numpy()         #Ambient temperature in Kelvin
-        Qavgs = df["DNI"] * df["sf_eta"] * (A_SF / area_rcv) * 1e-6
-        eta_rcv = func_receiver(np.array([T_pavgs,TambsK,Qavgs]).transpose())
-        return eta_rcv
+        temp_parts = temp_parts_avg * np.ones(Npoints)
+        temp_ambsK = df["temp_amb"].to_numpy()         #Ambient temperature in Kelvin
+        rcv_flux_avg = df["DNI"] * df["sf_eta"] * (sf_area / rcv_area) * 1e-6
+        return func_receiver(np.array([temp_parts, temp_ambsK, rcv_flux_avg]).transpose())
 
 
     def eta_pb_hourly(
@@ -238,12 +324,11 @@ class PlantCSPBeamDownParticle():
 
         if func_pb is None:
             raise ValueError("Power block efficiency function not provided.")
-        temp_pb_max = self.pb_temp_max.get_value("K")
+        temp_pb_max = self.pb_temp_max.u("K")
         Npoints = len(df)
         TambsC = df["temp_amb"].to_numpy() - 273.15         #Ambient temperature in Celcius
         T_maxC = (temp_pb_max-273.15) * np.ones(Npoints)
-        eta_pb = func_pb(np.array([T_maxC,TambsC]).transpose())
-        return eta_pb
+        return func_pb(np.array([T_maxC,TambsC]).transpose())
 
 
 def getting_basecase(
@@ -266,10 +351,7 @@ def getting_basecase(
     array = "A"
 
     # checking if the file existed
-    zf_value = zf.get_value("m")
-    Prcv_value = Prcv.get_value("MW")
-    Qavg_value = Qavg.get_value("MW/m2")
-    case = 'case_zf{:.0f}_Q_avg{:.2f}_Prcv{:.1f}'.format(zf_value, Qavg_value, Prcv_value)
+    case = 'case_zf{:.0f}_Q_avg{:.2f}_Prcv{:.1f}'.format(zf.u("m"), Qavg.u("MW/m2"), Prcv.u("MW"))
     # print(case)
     file_base_case = os.path.join(dir_cases,f'{case}.plk')
     
@@ -282,16 +364,16 @@ def getting_basecase(
         file_SF = os.path.join(
             DIR_DATA,
             'mcrt_datasets_final',
-            'Dataset_zf_{:.0f}'.format(zf_value)
+            'Dataset_zf_{:.0f}'.format(zf.u("m"))
         )
         CSTi['file_weather'] = os.path.join(
             DIR_DATA,
             'weather',
             "Alice_Springs_Real2000_Created20130430.csv"
         )
-        CSTi['zf'] = zf.get_value("m")
-        CSTi['Qavg'] = Qavg.get_value("MW/m2")
-        CSTi['P_rcv'] = Prcv.get_value("MW")
+        CSTi['zf'] = zf.u("m")
+        CSTi['Qavg'] = Qavg.u("MW/m2")
+        CSTi['P_rcv'] = Prcv.u("MW")
         Tp_avg = (CSTi['T_pC']+CSTi['T_pH'])/2
         CSTi['eta_rcv'] = spr.HTM_0D_blackbox( Tp_avg, CSTi['Qavg'] )[0]
         CSTi['Arcv'] = (CSTi['P_rcv']/CSTi['eta_rcv']) / CSTi['Qavg']
@@ -313,17 +395,6 @@ def getting_basecase(
             pickle.dump([CSTo,R2,SF,TOD],open(file_base_case,'wb'))
 
     return (CSTo,R2,SF,TOD)
-
-
-#%% Optical efficiency of Solar Field
-def eta_optical_SF(file_ae): 
-    df_ae = pd.read_table(file_ae,sep='\t',header=0)
-    df_ae.sort_values(by=['alt','azi'],axis=0,inplace=True)
-    
-    lbl='eta_SF'
-    alt, azi = df_ae['alt'].unique(), df_ae['azi'].unique()
-    eta = np.array(df_ae[lbl]).reshape(len(alt),len(azi))
-    return interp2d(azi, alt, eta, kind='linear')
 
 
 def eta_optical(
@@ -366,30 +437,6 @@ def eta_power_block(
         bounds_error=False,
         fill_value=np.nan
     )
-
-
-def eta_HPR_0D_2vars(Tstg):
-    F_c  = 5.
-    Tp   = Tstg + 273.
-    air  = ct.Solution('air.yaml')
-    #Particles characteristics
-    ab_p = 0.91    
-    em_p = 0.75
-    rho_b = 1810
-    df_eta=[]
-    for (T_amb,qi) in [(T_amb,qi) for T_amb in np.arange(5,56,5) for qi in np.arange(0.25,4.1,0.5)]:
-        Tamb = float(T_amb + 273.15)
-        air.TP = (Tp+Tamb)/2., ct.one_atm
-        Tsky = Tamb-15
-        hcov = F_c*htc.h_conv_NellisKlein(Tp, Tamb, 5.0, air)
-        hrad = em_p*5.67e-8*(Tp**4-Tsky**4)/(Tp-Tamb)
-        hrc  = hcov + hrad
-        qloss = hrc * (Tp - Tamb)
-        eta_th = (qi*1e6*ab_p - qloss)/(qi*1e6)
-        df_eta.append( [Tp,qi,T_amb,hcov,hrad,qloss,eta_th])    
-    df_eta = pd.DataFrame(df_eta,columns=['Tp','qi','T_amb','hcov', 'hrad', 'qloss', 'eta'])
-    return interp2d(df_eta['T_amb'],df_eta['qi'],df_eta['eta'])  #Function to interpolate
-
 
 def eta_HPR_0D() -> RegularGridInterpolator:
     F_c  = 5.
@@ -472,9 +519,8 @@ def load_weather_data(
     
     tz = 'Australia/Brisbane'
     if file_weather is None:
-        # dir_data = os.path.join(DIR_MAIN,"data","weather")
         file_weather  = os.path.join(
-            DIR_DATA,"weather", 'MERRA2_Processed_All.nc'
+            DIR_DATA, "weather", 'MERRA2_Processed_All.nc'
         )
     lat_v = lat
     lon_v = lng
@@ -533,145 +579,112 @@ def load_spotprice_data(
     )
     return df_sp_state
 
+class CO2:
+    _ct_solution = ct.Solution('gri30.yaml','gri30')
+    def cp(self, temp: float, pressure: float) -> float:
+        # Calculate specific heat capacity of CO2 at given temperature and pressure
+        self._ct_solution.TPY = temp, pressure, 'CO2:1.00'
+        return self._ct_solution.cp
 
-# def generating_df_aus(
-#         lat: float,
-#         lon: float,
-#         state: str,
-#         year_i: int,
-#         year_f: int,
-#         dT: float = 0.5) -> pd.DataFrame:
-    
-#     DIR_SPOTPRICE = os.path.join( DIR_MAIN,'data','NEM_spotprice')
-#     FILE_SPOTPRICE = os.path.join(DIR_SPOTPRICE, 'NEM_TRADINGPRICE_2010-2020.PLK')
-#     DIR_WEATHER_DATA = os.path.join(DIR_MAIN,"data","weather")
-#     FILE_WEATHER  = os.path.join(DIR_WEATHER_DATA, 'MERRA2_Processed_All.nc')
-
-#     #Spot price data for state
-#     df_SP = pd.read_pickle(FILE_SPOTPRICE)
-#     df_SP_st = (
-#         df_SP[
-#         (df_SP.index.year>=year_i) & (df_SP.index.year<=year_f)
-#         ][['SP_'+state]]
-#     )
-    
-#     data_weather = xr.open_dataset(FILE_WEATHER)
-#     lats = np.array(data_weather.lat)
-#     lons = np.array(data_weather.lon)
-#     lon_a = lons[(abs(lons-lon)).argmin()]
-#     lat_a = lats[(abs(lats-lat)).argmin()]
-#     df_weather = data_weather.sel(lon=lon_a,lat=lat_a).to_dataframe()
-    
-#     del data_weather #Cleaning memory
-    
-#     df_weather['DNI_dirint'] = df_weather['DNI_dirint'].fillna(0)
-#     df_weather.index = df_weather.index.tz_localize('UTC')
-#     df_weather = df_weather.resample(f'{dT:.1f}h').interpolate()       #Getting the data in half hours
-#     df_weather['DNI'] = df_weather['DNI_dirint']
-    
-#     # Merging the data
-#     df_data = df_weather.merge(
-#         df_SP_st,
-#         how='inner',
-#         left_index=True,
-#         right_index=True
-#     )
-#     del df_weather   #Cleaning memory
-    
-#     #Calculating  solar position
-#     tz = 'Australia/Brisbane'
-#     df_data.index = df_data.index.tz_convert(tz)
-#     sol_pos = Location(lat, lon, tz=tz).get_solarposition(df_data.index)
-#     df_data['azimuth'] = sol_pos['azimuth'].copy()
-#     df_data['elevation'] = sol_pos['elevation'].copy()
-    
-#     #Setting the initial dataframe for dispatch model
-#     df_data = df_data[['DNI','T2M','WS','azimuth','elevation','SP_'+state]]
-#     df_data.rename(
-#         columns={'T2M':'Tamb','azimuth':'azi','elevation':'ele'},
-#         inplace=True
-#     )
-#     df_data.rename(
-#         columns={ 'Demand_'+state:'Demand', 'SP_'+state:'SP' },
-#         inplace=True
-#     )
-#     return df_data
+    def rho(self, temp: float, pressure: float) -> float:
+        # Calculate specific heat capacity of CO2 at given temperature and pressure
+        self._ct_solution.TPY = temp, pressure, 'CO2:1.00'
+        return self._ct_solution.density_mass
 
 
-def PHX_LMTD(
-        P_sCO2: float,
-        T_sCO2_in: float,
-        T_sCO2_out: float,
-        T_p_in: float,
-        T_p_out: float,
-        U_HX: float) -> dict[str,float]:
+@dataclass
+class PrimaryHeatExchanger:
+    fluid = CO2()
+    parts = spr.Carbo()
     
-    #### Tube and shell hx using log-mean temp difference    
-    dT_sCO2  = T_sCO2_out - T_sCO2_in
-    CO2 = ct.Solution('gri30.yaml','gri30')
-    T_sCO2_avg = (T_sCO2_out+T_sCO2_in)/2
-    CO2.TPY  = T_sCO2_avg, 25e6, 'CO2:1.00'
-    cp_sCO2  = CO2.cp
-    
-    #This is a guess, I have to figure out how the number of pass influence
-    Npass = 4
-    m_sCO2 = P_sCO2 / (cp_sCO2 * dT_sCO2) / Npass
-    C_sCO2 = m_sCO2 * cp_sCO2
-    Q_HX = C_sCO2 * dT_sCO2
-    
-    dT_p    = T_p_in - T_p_out
-    T_p_avg = (T_p_in + T_p_out)/2
-    cp_p = 365*T_p_avg**0.18
-    C_p = Q_HX / dT_p
-    m_p = C_p / cp_p
-    
-    dT_lm = (
-        ((T_p_out-T_sCO2_in) - (T_p_in-T_sCO2_out))
-        /np.log((T_p_out-T_sCO2_in)/(T_p_in-T_sCO2_out))
-    )
-    C_min = min(C_p, C_sCO2)
-    C_max = max(C_p, C_sCO2)
-    Q_max = C_max * (T_p_in - T_sCO2_in)
-    epsilon = Q_HX  / Q_max
-    
-    A_HX = Q_HX / ( U_HX * dT_lm)
-    
-    Ntubes = 400  #[tubes/m2]
-    Dtubes = 0.03 #[m]
-    dAdV = (np.pi*Dtubes*1)*Ntubes
-    
-    V_HX   = A_HX/dAdV
-    
-    results = {
-        "heat_hx": Q_HX,
-        "epsilon": epsilon,
-        "LMTD": dT_lm,
-        "area_hx": A_HX,
-        "volume_hx": V_HX,
-        "mass_flowrate": m_p
-    }
-    return results
+    pb_power_th: Variable = Variable(20., "MW")
+    temp_sco2_in: Variable = Variable(550 + 273.15, "K")
+    temp_sco2_out: Variable = Variable(650 + 273.15, "K")
+    temp_parts_in: Variable = Variable(950, "K")
+    temp_parts_out: Variable = Variable(1200, "K")
+    U: Variable = Variable(240., "W/m2-K")               # Heat transfer coefficient
+    press_sco2: Variable = Variable(25e6, "Pa")        # Pressure of the sCO2 in the HX
+    n_pass: Variable = Variable(4, "-")              # Number of passes in the HX
+    n_tubes: Variable = Variable(400, "tubes/m2")           # Number of tubes per m2
+    d_tubes: Variable = Variable(0.03, "m")         # Diameter of the tubes in the HX
 
 
-def PHX_cost(
-        P_pb_th: float,
-        T_sCO2_in: float,
-        T_sCO2_out: float,
-        T_pH: float,
-        T_pC: float,
-        U_HX: float) -> float:
-    # Result is obtained in MM USD / MW_th
-    results = PHX_LMTD(
-        P_pb_th*1e6, T_sCO2_in+273., T_sCO2_out+273., T_pH, T_pC, U_HX
-    )
-    A_HX = results["area_hx"]
-    T_ps   = np.linspace(T_pH,T_pC,10)
-    f_HXTs = [
-        1 if (T_pi < 550+273.) else float(1+ 5.4e-5 * (T_pi-273.15-550)**2)
-        for T_pi in T_ps
-    ]
-    C_PHX  = float(np.mean(f_HXTs) * 1000 * A_HX / P_pb_th)
-    return C_PHX
+    def __post_init__(self):
+        # Outputs
+        self.heat_exchanged: Variable = Variable(None, "MW")
+        self.epsilon: Variable = Variable(None, "-")
+        self.lmtd: Variable = Variable(None, "K")
+        self.surface_area: Variable = Variable(None, "m2")
+        self.volume: Variable = Variable(None, "m3")
+        self.parts_mfr: Variable = Variable(None, "kg/s")
+        self.sco2_mfr: Variable = Variable(None, "kg/s")
+
+    @property
+    def cost(self) -> Variable:         # Result is obtained in MM USD/MW
+        self.run_model()
+        T_ps   = np.linspace(self.temp_parts_in.u("K"), self.temp_parts_out.u("K"),10)
+        f_HXTs = [
+            1 if (T_pi < 550+273.) else float(1+ 5.4e-5 * (T_pi-273.15-550)**2)
+            for T_pi in T_ps
+        ]
+        return Variable(
+            float(np.mean(f_HXTs) * 1000 * self.surface_area.u("m2") / self.pb_power_th.u("MW")), "MM USD/MW"
+        ) 
+
+    def run_model(self) -> None:
+    
+        #### Tube and shell hx using log-mean temp difference
+        temp_sco2_in = self.temp_sco2_in.u("K")
+        temp_sco2_out = self.temp_sco2_out.u("K")
+        temp_parts_in = self.temp_parts_in.u("K")
+        temp_parts_out = self.temp_parts_out.u("K")
+        pb_power_th = self.pb_power_th.u("MW")
+        U_HX = self.U.u("W/m2-K")
+        press_sco2 = self.press_sco2.u("Pa")
+        Npass = int(self.n_pass.u("-"))
+        n_tubes = int(self.n_tubes.u("tubes/m2"))
+        d_tubes = self.d_tubes.u("m")
+
+        dT_sco2  = temp_sco2_out - temp_sco2_in
+        temp_sco2_avg = (temp_sco2_out+temp_sco2_in)/2
+
+
+        cp_sco2  = self.fluid.cp(temp_sco2_avg, press_sco2)
+        
+        sco2_mfr = pb_power_th / (cp_sco2 * dT_sco2) / Npass
+        sco2_C = sco2_mfr * cp_sco2
+        heat_exchanged = sco2_C * dT_sco2
+        
+        dtemp_parts    = temp_parts_in - temp_parts_out
+        temp_parts_avg = (temp_parts_in + temp_parts_out)/2
+        parts_cp = self.parts.cp(temp_parts_avg)
+        parts_C = heat_exchanged / dtemp_parts
+        parts_mfr = parts_C / parts_cp
+        
+        lmtd = (
+            ((temp_parts_out-temp_sco2_in) - (temp_parts_in-temp_sco2_out))
+            /np.log((temp_parts_out-temp_sco2_in)/(temp_parts_in-temp_sco2_out))
+        )
+        C_min = min(parts_C, sco2_C)
+        C_max = max(parts_C, sco2_C)
+        heat_max = C_max * (temp_parts_in - temp_sco2_in)
+        epsilon = heat_exchanged  / heat_max
+        
+        surface_area = heat_exchanged / ( U_HX * lmtd)
+        dAdV = (np.pi*d_tubes*1)*n_tubes
+        
+        volume   = surface_area/dAdV
+        
+        self.heat_exchanged = Variable(heat_exchanged, "MW")
+        self.epsilon = Variable(epsilon, "-")
+        self.lmtd = Variable(lmtd, "K")
+        self.surface_area = Variable(surface_area, "m2")
+        self.volume = Variable(volume, "m3")
+        self.parts_mfr = Variable(parts_mfr, "kg/s")
+        self.sco2_mfr = Variable(sco2_mfr, "kg/s")
+        return None
+
+ 
 
 
 def dispatch_model_simple(
@@ -680,186 +693,194 @@ def dispatch_model_simple(
     ) -> pd.DataFrame:
 
 
-    Q_stg = plant.stg_cap.get_value("hr") * plant.pb_power_th.get_value("MW")
-    DNI_min = plant.DNI_min.get_value("W/m2")
+    stg_cap_heat = plant.storage_heat.u("MWh")
+    pb_power_el = plant.pb_power_el.u("MW")
+    pb_power_th = plant.pb_power_th.u("MW")
+    stg_cap = plant.stg_cap.u("hr")
+    sf_area = plant.sf_area.u("m2")
     Ntower = plant.Ntower
-    P_pb = plant.pb_power_el.get_value("MW")
-    A_SF = plant.sf_area.get_value("m2")
+    DNI_min = plant.DNI_min.u("W/m2")
 
-    dT = 0.5
+
+    dT = 0.5 #[hr]
     #Calculations for Collected Energy and potential Dispatched energy
     # Is the Solar Field operating?
-    df['SF_Op']  = np.where( df["DNI"]>DNI_min, 1, 0)
-    df['E_SF']   = df["SF_Op"] * df["sf_eta"] * df["DNI"] * A_SF * 1e-6 * dT   #[MWh]
-    df['E_rcv']  = df["E_SF"] * df["receiver_eta"]                                  #[MWh]
-    
+    df["rcv_op_fraction"]  = np.where( df["DNI"]>DNI_min, 1, 0)
+    df["sf_heat_to_rcv"]   = Ntower * df["rcv_op_fraction"] * df["sf_eta"] * df["DNI"] * sf_area * CF("W", "MW") * dT   #[MWh]
+    df['rcv_heat']  = df["sf_heat_to_rcv"] * df["rcv_eta"]                                  #[MWh]
+    df["rcv_heat"] = (
+        Ntower * df["DNI"] * sf_area * CF("W", "MW") * dT
+         * df["sf_eta"] * df["rcv_eta"] * df["rcv_op_fraction"]
+    )
+    df['rcv_heat'] = df["rcv_heat"].fillna(0)
+
     #It is assumed the same amount of energy is extracted from storage, so particle-sCO2 HX always try to work at design capacity. The energy dispatched is lower then.
-    df['E_th_pb'] = P_pb * dT                              #[MWh_th]
-    df['E_gen'] = Ntower * df['pb_eta'] * df['E_th_pb']    #[MWh_e] Including the Number of towers
-    df['R_gen'] = df['E_gen'] * df['SP']                   #[$]
+    df["pb_heat_req"] = pb_power_th * dT              #[MWh_th]
+    df["energy_gen_pot"] = df['pb_eta'] * df["pb_heat_req"]    #[MWh_e]
+    df["revenue_gen_pot"] = df["energy_gen_pot"] * df['SP']          #[$]
     
     #For simplicity the day starts with sunrise and lasts until next sunrise
-    df['NewDay']  = np.where(
-        (df["elevation"]*df["elevation"].shift(1)<0) & (df["elevation"]>0),
-        True,
-        False
-    )
-    df.loc[df.index[0],'NewDay'] = True    #The first day is manually set as 1
-    df['DaySet'] = df['NewDay'].cumsum()   # creating day index
-    df["DaySet"] = df["DaySet"].ffill()
+    df["new_day"]  = (df["elevation"]*df["elevation"].shift(1)<0) & (df["elevation"]>0)
+    df.loc[df.index[0],"new_day"] = True    #The first day is manually set as 1
+    df["day_index"] = df["new_day"].cumsum()   # creating day index
+    df["day_index"] = df["day_index"].ffill()
     
-    df['E_rcv'] = df["E_rcv"].fillna(0)
+    #Total heat delivered by receiver(s) per day and heat that exceeds the storage capacity
+    df["rcv_heat_collected"] = df.groupby(df["day_index"])['rcv_heat'].transform('sum')
+    df["heat_in_excess"] = df["rcv_heat_collected"] - stg_cap_heat
     
-    #Sorting dispatch periods by their potential revenue
-    #First the periods with the solar field operating are sorted
-    df['Rank_Disp_Op'] = (
-        df[ df["E_rcv"]>df["E_th_pb"] ]
-        .groupby( df["DaySet"] )["R_gen"]
+    #Ranking dispatch periods by their potential revenue
+    #First the periods when receiver generates more energy than extracted by power block
+    df["rank_dispatch_while_rcv_op"] = (
+        df[ df["rcv_heat"] > df["pb_heat_req"] ]
+        .groupby( df["day_index"] )["revenue_gen_pot"]
         .rank('first', ascending=False)
     )
     #Accumulated thermal energy extracted from Storage System
-    # for dispatch hours during solar field operation time, 
+    # for dispatch hours during solar field operation time,
     # sorted by Dispatch Ranking
-    df['E_th_pb_Cum_Op'] = (
-        df
-        .sort_values(['DaySet', 'Rank_Disp_Op'])
-        .groupby([ df["DaySet"] ])["E_th_pb"]
-        .cumsum()
-    )
-    df['E_th_pb_Cum_Op'] = (
+    # df["pb_heat_req_cum_while_rcv_op"] = (
+    #     df.sort_values(["day_index", "rank_dispatch_while_rcv_op"])
+    #     .groupby([ df["day_index"] ])["pb_heat_req"]
+    #     .cumsum()
+    # )
+    df["pb_heat_req_cum_while_rcv_op"] = (
         np.where(
-            df["Rank_Disp_Op"].isnull(),
-            np.nan,
-            df["E_th_pb_Cum_Op"])
+            df["rank_dispatch_while_rcv_op"].notnull(),
+            (
+                df.sort_values(["day_index", "rank_dispatch_while_rcv_op"])
+                .groupby([ df["day_index"] ])["pb_heat_req"]
+                .cumsum()
+            ),
+            np.nan
+        )
     )
-    #Total Energy delivered by Solar Field per day
-    df['E_collected'] = (
-        df.groupby(df["DaySet"])['E_rcv']
-        .transform('sum')
-    )
-    #Energy delivered by Solar Field that excede the storage capacity
-    df['E_excess']    = df['E_collected'] - Q_stg
     #Selecting the hours that should dispatch during operating time
-    df['Dispatch_Op'] = (
+    df["dispatch_while_rcv_op"] = (
         np.where(
-            (df["E_th_pb_Cum_Op"] < df["E_excess"]) & (df["SP"]>0) ,
+            (df["pb_heat_req_cum_while_rcv_op"] < df["heat_in_excess"]) & (df["SP"]>0) ,
             1,
             0
         )
     )
-    df['E_stg_cum_Op'] =(
-        (df["SF_Op"] * df["E_rcv"] - df["E_th_pb"] * df["Dispatch_Op"] )
-        .groupby(df["DaySet"])
+    df["stg_stored_cum_while_rcv_op"] =(
+        (df["rcv_op_fraction"] * df["rcv_heat"] - df["pb_heat_req"] * df["dispatch_while_rcv_op"] )
+        .groupby(df["day_index"])
         .cumsum()
     )
-    #If E_stg_cum > Q_stg, then we need to redirect part of solar field
-    df['SF_Op'] = (
+    #If E_stg_cum > stg_cap_heat, then we need to redirect part of solar field
+    df["rcv_op_fraction"] = (
         np.where(
-            (df["E_stg_cum_Op"] > Q_stg ) & (df["SF_Op"]>0),
-            1 - (df["E_stg_cum_Op"] - Q_stg )/df["E_rcv"],
-            df["SF_Op"]
+            (df["stg_stored_cum_while_rcv_op"] > stg_cap_heat ) & (df["rcv_op_fraction"]>0),
+            1 - (df["stg_stored_cum_while_rcv_op"] - stg_cap_heat )/df["rcv_heat"],
+            df["rcv_op_fraction"]
         )
     )
-    df['SF_Op'] = np.where((df["SF_Op"]<0), 0 , df["SF_Op"])
-    df['E_stg_cum_Op'] = (
-        (df["SF_Op"]*df["E_rcv"] - df["E_th_pb"]*df["Dispatch_Op"])
-        .groupby(df["DaySet"])
+    df["rcv_op_fraction"] = np.where((df["rcv_op_fraction"]<0), 0 , df["rcv_op_fraction"])
+    df["stg_stored_cum_while_rcv_op"] = (
+        (df["rcv_op_fraction"]*df["rcv_heat"] - df["pb_heat_req"]*df["dispatch_while_rcv_op"])
+        .groupby(df["day_index"])
         .cumsum()
     )
-    df['E_used_Op'] = (
-        (df["E_th_pb"]*df["Dispatch_Op"])
-        .groupby(df["DaySet"])
+    df["heat_used_while_rcv_op"] = (
+        (df["pb_heat_req"]*df["dispatch_while_rcv_op"])
+        .groupby(df["day_index"])
         .transform('sum')
     )
     #Energy available to generate electricity after the first group dispatched
-    df['E_avail_NoOp'] = (
-        df['E_stg_cum_Op']
-        .groupby(df["DaySet"])
+    df["heat_avail_after_first_dispatch"] = (
+        df["stg_stored_cum_while_rcv_op"]
+        .groupby(df["day_index"])
         .transform('last')
     )
     # Ranking for all remaining hours that haven't dispatched yet
-    df['Rank_Disp_NoOp'] = (
-        df[(df["Dispatch_Op"]<=0) & (df['E_stg_cum_Op'] > df['E_th_pb'])]
-        .groupby(df["DaySet"])
-        ["R_gen"]
+    df["rank_dispatch_after_first"] = (
+        df[(df["dispatch_while_rcv_op"]<=0) & (df["stg_stored_cum_while_rcv_op"] > df["pb_heat_req"])]
+        .groupby(df["day_index"])
+        ["revenue_gen_pot"]
         .rank('first', ascending=False)
     )
     #Selecting the hours that should dispatch at anytime,
     # excluding those who already dispatched
-    df['E_th_pb_Cum_NoOp'] = (
-        df[(df["Dispatch_Op"]<=0) & (df['E_stg_cum_Op']>df['E_th_pb'])]
-        .sort_values(['DaySet', 'Rank_Disp_NoOp'])
-        .groupby(df["DaySet"])
-        ["E_th_pb"]
+    df["pb_heat_req_cum_after_first"] = (
+        df[(df["dispatch_while_rcv_op"]<=0) & (df["stg_stored_cum_while_rcv_op"]>df["pb_heat_req"])]
+        .sort_values(["day_index", "rank_dispatch_after_first"])
+        .groupby(df["day_index"])
+        ["pb_heat_req"]
         .cumsum()
     )
-    df['Dispatch_NoOp'] = (
+    df["dispatch_second"] = (
         np.where(
-            (df["E_th_pb_Cum_NoOp"]<=df["E_avail_NoOp"])
-            & (df["Dispatch_Op"]<=0) & (df["SP"]>0),
+            (
+                (df["pb_heat_req_cum_after_first"]<=df["heat_avail_after_first_dispatch"])
+                & (df["dispatch_while_rcv_op"]<=0)
+                & (df["SP"]>0)
+            ),
             1,
             0
         )
     )
-    df['Dispatch_Both'] = (
+    df["dispatch_both"] = (
         np.where(
-            (df["Dispatch_Op"]>0) | (df["Dispatch_NoOp"]>0),
+            (df["dispatch_while_rcv_op"]>0) | (df["dispatch_second"]>0),
             1,
             0
         )
     )    
-    df['E_stg_cum_both'] = (
-        (df["SF_Op"] * df["E_rcv"] - df["E_th_pb"]*df["Dispatch_Both"])
-        .groupby(df["DaySet"])
+    #Net energy on each time after Both
+    df["heat_stored_after_both"]  = (
+        df["rcv_op_fraction"] * df["rcv_heat"] - df["pb_heat_req"]*df["dispatch_both"]
+    )
+    df["heat_stored_cum_after_both"] = (
+        df["heat_stored_after_both"]
+        .groupby(df["day_index"])
         .cumsum()
     )
-    #Net energy on each time after Both
-    df['E_stg_both']  = (
-        df["SF_Op"] * df["E_rcv"] - df["E_th_pb"]*df["Dispatch_Both"]
-    )
-    df['E_remaining'] = (
-        df['E_stg_cum_both']
-        .groupby(df["DaySet"])
+    df["heat_remaining_after_both"] = (
+        df['heat_stored_cum_after_both']
+        .groupby(df["day_index"])
         .transform('last')
     )
-    df['disp_remaining'] = (df["E_remaining"]/df["E_th_pb"])
-    df['Rank_Disp_Extra'] = (
-        df[(df["Dispatch_Both"]<=0) & (df["SP"]>0)]
-        .groupby(df["DaySet"])["R_gen"]
+    df["dispatch_remaining"] = (df["heat_remaining_after_both"]/df["pb_heat_req"])
+    df["rank_dispatch_extra"] = (
+        df[(df["dispatch_both"]<=0) & (df["SP"]>0)]
+        .groupby(df["day_index"])["revenue_gen_pot"]
         .rank('first', ascending=False)
     )
     #Selecting the hours that should dispatch at anytime, excluding those who already dispatched
     #All the full periods are included
-    df['E_avail_Extra'] = (
+    df["heat_avail_extra"] = (
         np.where(
             (
-                (df["Rank_Disp_Extra"]>0)
-                & (df["disp_remaining"]<1) 
-                & (df["disp_remaining"]>0.01)
+                (df["rank_dispatch_extra"]>0)
+                & (df["dispatch_remaining"]<1) 
+                & (df["dispatch_remaining"]>0.01)
             ),
-            df["E_stg_both"]/df["E_th_pb"],
+            df["heat_stored_after_both"]/df["pb_heat_req"],
             0.
         )
     )
-    df['E_avail_Extra'] = (
+    df["heat_avail_extra"] = (
         np.where(
-            (df["Rank_Disp_Extra"]>0),
-            df["E_stg_both"]/df["E_th_pb"],
+            (df["rank_dispatch_extra"]>0),
+            df["heat_stored_after_both"]/df["pb_heat_req"],
             0.
         )
     )
-    df['Dispatch_Extra'] = np.where(
-        (df.Rank_Disp_Extra>0) & (df.Rank_Disp_Extra-1<df.disp_remaining), 
-        df[['disp_remaining', 'E_avail_Extra']].min( axis=1 ), 
+    df["dispatch_extra"] = np.where(
+        (df["rank_dispatch_extra"]>0) & (df["rank_dispatch_extra"]-1<df["dispatch_remaining"]), 
+        df[['dispatch_remaining', 'heat_avail_extra']].min( axis=1 ), 
         0.
     )
-    df['Dispatch_Full'] = (df["Dispatch_Both"] + df["Dispatch_Extra"])
+    df["dispatch_all"] = (df["dispatch_both"] + df["dispatch_extra"])
     
-    df['E_stg_net'] = df["SF_Op"] * df["E_rcv"] - df["E_th_pb"] * df["Dispatch_Full"]
-    df['E_stg_cum_tot'] = df["E_stg_net"].cumsum()
-    df['E_stg_cum_day'] = df.groupby(df["DaySet"])['E_stg_net'].cumsum()
-    df['E_gen_final'] = df["Dispatch_Full"] * df["E_gen"]      # [MWh]
-    df['Rev_final'] = df["E_gen_final"] * df["SP"]           # [AUD]
+    df["heat_stored_in"] = df["rcv_op_fraction"] * df["rcv_heat"]
+    df["heat_stored_out"] = df["dispatch_all"] * df["pb_heat_req"]
+    df['heat_stored_net'] =  df["heat_stored_in"] - df["heat_stored_out"]  # [MWh]
+    df['heat_stored_cum_total'] = df["heat_stored_net"].cumsum()
+    df['heat_stored_cum_day'] = df.groupby(df["day_index"])['heat_stored_net'].cumsum()
+    df['energy_gen_final'] = df["dispatch_all"] * df["energy_gen_pot"]      # [MWh]
+    df['revenue_final'] = df["energy_gen_final"] * df["SP"]                 # [AUD]
     return df
 
 
@@ -896,12 +917,11 @@ def annual_performance(
         ):
     
     dT = 0.5
-    receiver_power = plant.receiver_power.get_value("MW")
-    pb_power_el = plant.pb_power_el.get_value("MW")
-    pb_power_th = plant.pb_power_th.get_value("MW")
-    pb_temp_max = plant.pb_temp_max.get_value("K")
-    stg_temp_hot = plant.stg_temp_hot.get_value("K")
-    stg_temp_cold = plant.stg_temp_cold.get_value("K")
+    rcv_power = plant.rcv_power.u("MW")
+    pb_power_el = plant.pb_power_el.u("MW")
+    Ntower = plant.Ntower
+    pb_temp_max = plant.pb_temp_max.u("K")
+
     
     # Obtaining the efficiencies in hourly basis
     df["date"] = pd.to_datetime(df.index).date
@@ -909,45 +929,45 @@ def annual_performance(
     years = Ndays/365
     
     df["sf_eta"] = plant.eta_optical_hourly(df)
-    df["receiver_eta"] = plant.eta_receiver_hourly(df, eta_HPR_0D())
+    df["rcv_eta"] = plant.eta_receiver_hourly(df, eta_HPR_0D())
     df["pb_eta"] = plant.eta_pb_hourly(df, eta_power_block())
     
     df_out = dispatch_model_simple(df, plant)
 
     stg_heat_stored = Variable(
-        df_out["E_rcv"].sum()/years, "MWh/yr"
+        df_out["rcv_heat"].sum()/years, "MWh/yr"
     )                                           # annual energy stored per tower
     pb_energy_dispatched = Variable(
-        df_out["E_gen_final"].sum()/years, "MWh/yr"
+        df_out["energy_gen_final"].sum()/years, "MWh/yr"
     )                                           # annual energy dispatched per power block
     revenue_tot = Variable(
-        df_out["Rev_final"].sum()/1e6/years, "MM USD/yr"
+        df_out["revenue_final"].sum()/1e6/years, "MM USD/yr"
     )    # total annual revenue per power block
     revenue_daily = Variable(
-        df_out["Rev_final"].sum()/1000/Ndays, "k AUD/day"
+        df_out["revenue_final"].sum()/1000/Ndays, "k USD/day"
     )   #daily revenue
     sf_cf = Variable(
-        df_out["E_rcv"].sum() / (receiver_power * dT * len(df_out)), "-"
+        df_out["rcv_heat"].sum() / (Ntower * rcv_power * dT * len(df_out)), "-"
     )
     pb_cf = Variable(
-        df_out["E_gen_final"].sum() / (pb_power_el * dT * len(df_out)), "-"
+        df_out["energy_gen_final"].sum() / (pb_power_el * dT * len(df_out)), "-"
     )
     sf_time_operation = Variable(
-        df_out["SF_Op"].sum()*dT / years, "-"
+        df_out["rcv_op_fraction"].sum()*dT / years, "-"
     )                #hrs
     pb_time_operation = Variable(
-        df_out["Dispatch_Full"].sum()*dT/years, "-"
+        df_out["dispatch_all"].sum()*dT/years, "-"
     )        #hrs
     stg_min_stored = Variable(
-        df_out["E_stg_cum_day"].min(), "MWh"
+        df_out["heat_stored_cum_day"].min(), "MWh"
     )  # minimum energy stored in the storage system
     
     #Updating costs and converting USD to AUD
     # Obtaining the costs for the power block an PHX
     USDtoAUD = 1.4
-    costs_in = spr.get_plant_costs()
-    costs_in['CF_sf'] = sf_cf.v
-    costs_in['CF_pb'] = pb_cf.v
+    costs_in = plant.cost_input
+    costs_in['CF_sf'] = sf_cf.u("-")
+    costs_in['CF_pb'] = pb_cf.u("-")
     
     pb_red_cost_factor = float(costs_in['F_pb'])
     file_pb = os.path.join(DIR_DATA,'sCO2_cycle','sCO2_lookuptable_costs.csv')
@@ -966,43 +986,42 @@ def annual_performance(
     else:
         raise ValueError('Invalid value for C_pb_est')
     f_pb = LinearNDInterpolator(XY,df_pb[lbl_f])
-    pb_capital = (1-pb_red_cost_factor) * f_pb([pb_power_el,pb_temp_max-273.15])[0]
+    pb_cost = pb_red_cost_factor * f_pb([pb_power_el,pb_temp_max-273.15])[0]
     
     #Obtaining the CO2 temperatures
     lbl_f = 'T_co2_PHX_in'
     f_sCO2_in = LinearNDInterpolator(XY,df_pb[lbl_f])
-    T_sCO2_in  = f_sCO2_in([pb_power_el,pb_temp_max-273.15])[0]
+    temp_sco2_in  = f_sCO2_in([pb_power_el,pb_temp_max-273.15])[0]
     
     lbl_f = 'T_turb_in'
     f_sCO2_out = LinearNDInterpolator(XY,df_pb[lbl_f])
-    T_sCO2_out  = f_sCO2_out([pb_power_el,pb_temp_max-273.15])[0]
+    temp_sco2_out  = f_sCO2_out([pb_power_el,pb_temp_max-273.15])[0]
     
-    U_HX = 240.                             #Value from DLR design
-    C_PHX = PHX_cost(pb_power_th, T_sCO2_in, T_sCO2_out, stg_temp_hot, stg_temp_cold, U_HX)
+    phx = PrimaryHeatExchanger(
+        pb_power_th=plant.pb_power_th,
+        temp_sco2_in=Variable(temp_sco2_in + 273.15, "K"),
+        temp_sco2_out=Variable(temp_sco2_out + 273.15, "K"),
+        temp_parts_in=plant.stg_temp_hot,
+        temp_parts_out= plant.stg_temp_cold,
+        U=plant.hx_u,
+    )
     
-    costs_in['C_pb']  = pb_capital * 1e3            #[USD/MW]
-    costs_in['C_PHX'] = C_PHX                 #[USD/MW]
-    
-    # CSTo = {}
-    # SF = pd.DataFrame()
-    # CSTo['costs_in'] = costs_in
-    # CSTo['type_weather'] = 'MERRA2'         #This is to use CF_sf calculated here
-    # Costs_o = spr.BDR_cost(SF, CSTo)
-    # Costs_o = spr.plant_costing_calculations(plant, HB, TOD, costs_in, SF)
+    costs_in['C_pb']  = pb_cost * 1e3            #[USD/MW]
+    costs_in['C_PHX'] = phx.cost.u("USD/MW")                 #[USD/MW]
 
-    cost_capital  = plant.costs_out["Elec"] * USDtoAUD         #Total Capital Cost [AUD]
+    cost_capital  = plant.costs_out["Elec"]
     discount_rate = float(costs_in['DR'])
     n_years = int(costs_in['Ny'])
     cost_om = float(costs_in['C_OM'])
     
     lcoh = spr.get_lcoh(
-            plant.costs_out["Heat"], cost_om, receiver_power, sf_cf.v, discount_rate, n_years,
-        )* USDtoAUD
+            plant.costs_out["Heat"], cost_om, rcv_power, sf_cf.v, discount_rate, n_years,
+        )
     lcoe = spr.get_lcoe(
             plant.costs_out["Elec"], cost_om, pb_power_el, pb_cf.v, discount_rate, n_years,
-        )* USDtoAUD
+        )
     npv, roi, payback_period = calc_financial_metrics(
-        revenue_tot.get_value("MM USD/yr"),
+        revenue_tot.u("MM USD/yr"),
         cost_capital,
         discount_rate,
         n_years,
@@ -1016,15 +1035,15 @@ def annual_performance(
         'pb_cf':pb_cf,
         'revenue_tot':revenue_tot,
         'revenue_daily':revenue_daily,
-        'lcoh': Variable(lcoh, "AUD/MWh"),
-        'lcoe':Variable(lcoe, "AUD/MWh"),
-        'pb_capital': Variable(pb_capital, "MM AUD"),
-        'cost_capital': Variable(cost_capital, "MM AUD"),
+        'lcoh': Variable(lcoh, "USD/MWh"),
+        'lcoe':Variable(lcoe, "USD/MWh"),
+        'pb_cost': Variable(pb_cost, "MM USD"),
+        'cost_capital': Variable(cost_capital, "MM USD"),
         'roi':Variable(roi, "-"),
         'payback_period': Variable(payback_period, "yr"),
-        'npv': Variable(npv, "MM AUD"),
-        'time_operation_sf':sf_time_operation,
-        'time_operation_pb':pb_time_operation,
+        'npv': Variable(npv, "MM USD"),
+        'sf_time_operation':sf_time_operation,
+        'pb_time_operation':pb_time_operation,
         'date_simulation':time.time(),
     }
     return results

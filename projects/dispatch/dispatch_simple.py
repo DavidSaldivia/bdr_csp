@@ -1,8 +1,9 @@
-from dataclasses import dataclass, field
 import os
 import time
 
+import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from antupy.units import Variable
 
@@ -12,7 +13,6 @@ DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
 
 COLS_INPUT = ppc.COLS_INPUT
 COLS_OUTPUT = ppc.COLS_OUTPUT
-
 
 def get_data_location(plant: ppc.PlantCSPBeamDownParticle, location: int) -> None:
     if location == 1:
@@ -48,19 +48,18 @@ def dispatch_single_case(
         plant: ppc.PlantCSPBeamDownParticle,
         year_i: int = 2019,
         year_f: int = 2019,
-        ) -> pd.DataFrame:
+        ) -> dict:
 
-    receiver_power = plant.receiver_power.get_value("MW")
+    rcv_power = plant.rcv_power.u("MW")
     Ntower = plant.Ntower
-    stg_cap = plant.stg_cap.get_value("hr")
-    solar_multiple = plant.solar_multiple.get_value("-")
-    pb_eta_des = plant.pb_eta_des.get_value("-")
+    stg_cap = plant.stg_cap.u("hr")
+    solar_multiple = plant.solar_multiple.u("-")
+    pb_eta_des = plant.pb_eta_des.u("-")
 
-    latitude = plant.lat.get_value("deg")
-    longitude = plant.lng.get_value("deg")
+    latitude = plant.lat.u("deg")
+    longitude = plant.lng.u("deg")
     
     dT = 0.5            #Time in hours
-    print('Charging new dataset')
 
     df_weather = ppc.load_weather_data(latitude, longitude, year_i, year_f, dT)
     df_sp = ppc.load_spotprice_data(plant.state, year_i, year_f, dT)
@@ -73,9 +72,9 @@ def dispatch_single_case(
     print('\t'.join('{:}'.format(x) for x in COLS_INPUT + COLS_OUTPUT))
     
     #Design power block efficiency and capacity
-    pb_power_th = receiver_power / solar_multiple        #[MW] Design value for Power from receiver to power block
-    pb_power_el = Ntower * pb_eta_des * pb_power_th      #[MW] Design value for Power Block generation
-    storage_heat  = pb_power_th * stg_cap            #[MWh] Capacity of storage per tower
+    pb_power_th = Ntower * rcv_power / solar_multiple  #[MW] Design value for Power from receiver to power block
+    pb_power_el = pb_eta_des * pb_power_th             #[MW] Design value for Power Block generation
+    storage_heat  = pb_power_th * stg_cap              #[MWh] Capacity of storage per tower
 
     plant.pb_power_th  = Variable(pb_power_th,"MW")
     plant.pb_power_el  = Variable(pb_power_el,"MW")
@@ -83,24 +82,51 @@ def dispatch_single_case(
     
     # Annual performance
     out = ppc.annual_performance(plant, df)
+
     date_sim = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime())
-    data.append([Ntower, stg_cap, solar_multiple, receiver_power, 
+    data.append([Ntower, stg_cap, solar_multiple, rcv_power, 
                  pb_power_el] + [out[x].v for x in COLS_OUTPUT] + [date_sim])
     print('\t'.join('{:8.3f}'.format(x) for x in data[-1][:-1]))
     
-    return pd.DataFrame(data,columns=COLS_INPUT + COLS_OUTPUT + ["date_sim"])
+    return out
+
+
+# def dispatch_multiple_cases(
+#         plant: ppc.PlantCSPBeamDownParticle,
+#         year_i: int = 2019,
+#         year_f: int = 2019,
+#     ) -> pd.DataFrame:
+
+#     data = []
+#     print('\t'.join('{:}'.format(x) for x in COLS_INPUT + COLS_OUTPUT))
+#     plant = ppc.PlantCSPBeamDownParticle(
+#         zf = Variable(50., "m"),
+#         fzv = Variable(0.818161, "-"),
+#         rcv_power = Variable(19.,"MW"),
+#         flux_avg = Variable(1.25,"MW/m2"),
+#         Ntower = 4,
+#         rcv_type="HPR_0D",
+#         solar_multiple=Variable(2.0, "-"),
+#     )
+#     R2, SF = plant.run_thermal_subsystem()
+#     results = dispatch_single_case(plant, year_i=2016, year_f=2020)
+
+#     return pd.DataFrame(data, columns=COLS_INPUT + COLS_OUTPUT + ["date_sim"])
 
 
 def main():
-    
+
     plant = ppc.PlantCSPBeamDownParticle(
         zf = Variable(50., "m"),
         fzv = Variable(0.818161, "-"),
-        receiver_power = Variable(19.,"MW"),
+        rcv_power = Variable(19.,"MW"),
         flux_avg = Variable(1.25,"MW/m2"),
+        Ntower = 4,
+        rcv_type="HPR_0D",
+        solar_multiple=Variable(2.0, "-"),
     )
-    costs_out, R2, SF = plant.run_thermal_subsystem()
-    results = dispatch_single_case(plant)
+    R2, SF = plant.run_thermal_subsystem()
+    results = dispatch_single_case(plant, year_i=2016, year_f=2020)
 
     return
 

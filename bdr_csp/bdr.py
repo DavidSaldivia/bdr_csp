@@ -43,7 +43,7 @@ class SolarField():
     A_h1: Variable = Variable(2.97**2,"m2")             # Area of one heliostat
     N_pan: int = 1                                      # Number of panels per heliostat
     file_SF: str|None = None                            # File with the rays data
-    helios: pd.DataFrame|None = None                  # heliostats DataFrame
+    helios: pd.DataFrame|None = None                    # heliostats DataFrame
 
     def load_dataset(self, **kwargs) -> tuple[pd.DataFrame,pd.DataFrame]:
         """
@@ -1237,8 +1237,8 @@ def get_eta_attenuation(R1: pd.DataFrame) -> pd.Series:
     )
     R1['dray'] = d1 + d2
     d = R1.groupby('hel').mean()['dray']/1e3
-    Eta_att = 1 - (0.006789 + 0.1046*d - 0.017*d**2 + 0.002845*d**3)
-    return Eta_att
+    eta_att = 1 - (0.006789 + 0.1046*d - 0.017*d**2 + 0.002845*d**3)
+    return eta_att
 
 
 
@@ -1337,7 +1337,7 @@ def heliostat_selection(
 
         # Writing the results for partial iteration
         if verbose:
-            hb_area = HB.area.get_value("m2")
+            hb_area = HB.surface_area.get_value("m2")
             
             text_r = '\t'.join('{:.4f}'.format(x) for x in [
                 Nit, eta_hbi, N_hel, hb_area,

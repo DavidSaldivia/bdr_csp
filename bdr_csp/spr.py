@@ -7,8 +7,10 @@ Created on Mon Jun 27 18:29:52 2022
 from __future__ import annotations
 import os
 import sys
-from dataclasses import dataclass
-from typing import TypedDict, TYPE_CHECKING	
+from dataclasses import dataclass, field
+
+from collections.abc import Callable
+from typing import TypedDict, TYPE_CHECKING, Union, Protocol
 
 import pandas as pd
 import numpy as np
@@ -50,16 +52,45 @@ COLS_OUTPUT = [
     'date_simulation'
 ]
 
-class ReceiverOutput(TypedDict):
-    temps_parts: np.ndarray
-    n_hels: int
-    rad_flux_max: float
-    rad_flux_avg: float | None
-    heat_stored: float | None
-    eta_rcv: float
-    mass_stg: float | None
-    time_res: float | None
-    vel_p: float | None
+
+@dataclass
+class SolidMaterial(Protocol):
+    """Protocol for materials used in receivers."""
+    rho: Variable | Callable[[float],float] = Variable(None, "kg/m3")
+    cp: Variable | Callable[[float],float] = Variable(None, "J/kg-K")
+    cond: Variable | Callable[[float],float] = Variable(None, "W/m-K")
+    alpha: Variable | Callable[[float],float] = Variable(None, "m2/s")
+    absortivity: Variable | Callable[[float],float] = Variable(None, "-")
+    emi: Variable | Callable[[float],float] = Variable(None, "-")
+
+
+def _cp_carbo(self, T: float) -> float:
+    """Specific heat capacity for CARBO material. T in [K]"""
+    return 148 * T**0.3093
+
+def _alpha_carbo(self, T: float) -> float:
+    """Thermal diffusivity for CARBO material. T in [K]"""
+    return 0.7 / (1810 * self._cp_carbo(T))
+
+@dataclass(frozen=True)
+class Carbo():
+    rho =  Variable(1810, "kg/m3")
+    cp = _cp_carbo
+    cond = Variable(0.7, "W/m-K")  # Thermal conductivity
+    alpha = _alpha_carbo
+    absortivity = Variable(0.91, "-")  # Absorptivity
+    emi = Variable(0.85, "-")  # Emissivity
+
+# class ReceiverOutput(TypedDict):
+#     temps_parts: np.ndarray
+#     n_hels: int
+#     rad_flux_max: float
+#     rad_flux_avg: float | None
+#     heat_stored: float | None
+#     eta_rcv: float
+#     mass_stg: float | None
+#     time_res: float | None
+#     vel_p: float | None
 
 
 def HTM_0D_blackbox(
@@ -386,29 +417,43 @@ def get_func_heat_flux_rcv1(xr,yr,lims,P_SF1):
 
 @dataclass
 class HPR0D():
-    nom_power:float = 10.          # [MWth] Initial target for Receiver nominal power
-    heat_flux_max: float = 3.0     # [MW/m2] Maximum radiation flux on receiver
-    heat_flux_avg: float = 0.5     # [MW/m2] Average radiation flux on receiver (initial guess)
-    temp_ini: float = 950          # [K] Particle temperature in cold tank
-    temp_out: float = 1200         # [K] Particle temperature in hot tank
-    material: str = 'CARBO'        # [-] Thermal Storage Material
-    thickness_parts: float = 0.05  # [m] Thickness of material on conveyor belt
-    factor_htc: float = 2.57       # [-] factor to magnified the HTC
+    rcv_nom_power: Variable = Variable(10., "MW")      # Initial target for Receiver nominal power
+    heat_flux_max: Variable = Variable(3.0, "MW/m2")     # Maximum radiation flux on receiver
+    heat_flux_avg: Variable = Variable(0.5, "MW/m2")     # Average radiation flux on receiver (initial guess)
+    temp_ini: Variable = Variable(950, "K")          # Particle temperature in cold tank
+    temp_out: Variable = Variable(1200, "K")         # Particle temperature in hot tank
+    material: Carbo = Carbo()                        # [-] Thermal Storage Material
+    thickness_parts: Variable = Variable(0.05, "m")  # Thickness of material on conveyor belt
+    factor_htc: Variable = Variable(2.57, "-")       # factor to magnified the HTC
 
-    def run_model(self, SF, air=ct.Solution('air.yaml')) -> ReceiverOutput:
+    def __post_init__(self):
+        self.rcv_power_in: Variable = Variable(None, "MW")
+        self.temps_parts: np.ndarray = np.array([])
+        self.n_hels: Variable = Variable(None, "-")
+        self.rad_flux_max: Variable = Variable(None, "MW/m2")
+        self.rad_flux_avg: Variable = Variable(None, "MW/m2")
+        self.heat_stored: Variable = Variable(None, "MWh")
+        self.eta_rcv: Variable = Variable(None, "-")
+        self.mass_stg: Variable = Variable(None, "kg/s")
+        self.time_res: Variable = Variable(None, "s")
+        self.vel_parts: Variable = Variable(None, "m/s")
+
+    def run_model(self, SF) -> None:
     
-        Prcv = self.nom_power
-        Qavg = self.heat_flux_avg
-        Tin = self.temp_ini
-        Tout = self.temp_out
-        tz = self.thickness_parts
-        Fc = self.factor_htc
-    
+        Prcv = self.rcv_nom_power.u("MW")
+        Qavg = self.heat_flux_avg.u("MW/m2")
+        Tin = self.temp_ini.u("K")
+        Tout = self.temp_out.u("K")
+        tz = self.thickness_parts.u("m")
+        Fc = self.factor_htc.u("-")
+        material = self.material
+        
+        air= ct.Solution('air.yaml')
         Tp = 0.5*(Tin+Tout)
         eta_rcv = HTM_0D_blackbox(Tp, Qavg, Fc=Fc, air=air)[0]
         
-        rho_b = 1810
-        cp = 148*Tp**0.3093
+        rho_b = material.rho.u("kg/m3")
+        cp = material.cp(148*Tp**0.3093)
         t_res = rho_b * cp * tz * (Tout - Tin ) / (Qavg*1e6*eta_rcv)
         m_p = Prcv*1e6 / (cp*(Tout-Tin))
         P_bdr = Prcv / eta_rcv
@@ -417,38 +462,53 @@ class HPR0D():
         Ltot  = Arcv**0.5
         vel_p = Ltot / t_res
         Q_acc    = SF['Q_h1'].cumsum()
-        
-        rcvr_output = {
-            "receiver_power": P_bdr,
-            "temps_parts" : np.array([Tp]),
-            "n_hels" : len( Q_acc[ Q_acc < P_bdr ] ) + 1,
-            "rad_flux_max" : np.nan,            #No calculated
-            "rad_flux_avg" : P_bdr/Arcv,
-            "heat_stored": np.nan,            #No calculated
-            "eta_rcv": eta_rcv,
-            "mass_stg": m_p,
-            "time_res": t_res,
-            "vel_p": vel_p,
-        }
-        return rcvr_output
+
+        # Output
+        self.rcv_power_in = Variable( P_bdr, "MW" )
+        self.temps_parts = np.array([Tp])
+        self.n_hels =  Variable( len( Q_acc[ Q_acc < P_bdr ] ) + 1, "-" )
+        self.rad_flux_max = Variable( np.nan, "MW/m2" )
+        self.rad_flux_avg = Variable( P_bdr/Arcv, "MW/m2" )
+        self.heat_stored = Variable( np.nan, "MWh" )
+        self.eta_rcv = Variable( eta_rcv, "-" )
+        self.mass_stg = Variable( m_p, "kg/s" )
+        self.time_res = Variable( t_res, "s" )
+        self.vel_parts = Variable( vel_p, "m/s" )
+
 
 @dataclass
 class HPR2D():
-    nom_power:float = 10.          # [MWth] Initial target for Receiver nominal power
-    heat_flux_max:float = 3.0      # [MW/m2] Maximum radiation flux on receiver
-    heat_flux_avg: float = 0.5     # [MW/m2] Average radiation flux on receiver (initial guess)
-    temp_ini: float = 950          # [K] Particle temperature in cold tank
-    temp_out: float = 1200         # [K] Particle temperature in hot tank
-    material: str = 'CARBO'        # [-] Thermal Storage Material
-    thickness_parts: float = 0.05  # [m] Thickness of material on conveyor belt
-    factor_htc: float = 2.57       # [-] factor to magnified the HTC
+    rcv_nom_power: Variable = Variable(10., "MW")      # Initial target for Receiver nominal power
+    heat_flux_max: Variable = Variable(3.0, "MW/m2")     # Maximum radiation flux on receiver
+    heat_flux_avg: Variable = Variable(0.5, "MW/m2")     # Average radiation flux on receiver (initial guess)
+    temp_ini: Variable = Variable(950, "K")          # Particle temperature in cold tank
+    temp_out: Variable = Variable(1200, "K")         # Particle temperature in hot tank
+    material: Carbo = Carbo()        # [-] Thermal Storage Material
+    thickness_parts: Variable = Variable(0.05, "m")  # Thickness of material on conveyor belt
+    factor_htc: Variable = Variable(2.57, "-")       # factor to magnified the HTC
+
     x_fin: float | None = None
     x_ini: float | None = None
     x_bot: float | None = None
     x_top: float | None = None
 
+    def __post_init__(self):
+        # Output
+        self.rcr_power_in: Variable = Variable(None, "MW")
+        self.temps_parts = np.array([])
+        self.n_hels: Variable = Variable(None, "-")
+        self.rad_flux_max: Variable = Variable(None, "MW/m2")
+        self.rad_flux_avg: Variable = Variable(None, "MW/m2")
+        self.heat_stored: Variable = Variable(None, "MWh")
+        self.eta_rcv: Variable = Variable(None, "-")
+        self.mass_stg: Variable = Variable(None, "kg/s")
+        self.time_res: Variable = Variable(None, "s")
+        self.vel_p: Variable = Variable(None, "m/s")
+
+
+
     def get_dimensions(self, TOD: TertiaryOpticalDevice, tod_index: int = 0) -> None:
-        xO,yO = TOD.perimeter_points(TOD.radius_out, tod_index=tod_index)
+        xO,yO = TOD.perimeter_points(TOD.radius_out.v, tod_index=tod_index)
         self.x_fin = xO.min()
         self.x_ini = xO.max()
         self.y_bot = yO.min()
@@ -472,14 +532,14 @@ class HPR2D():
             T_p, _, _ = HTM_2D_moving_particles(rcvr_input, vel_p)
             return T_p.mean()-temp_out
         
-        temp_ini = self.temp_ini
-        temp_out = self.temp_out
-        thickness_parts = self.thickness_parts
+        temp_ini = self.temp_ini.u("K")
+        temp_out = self.temp_out.u("K")
+        thickness_parts = self.thickness_parts.u("m")
         material = self.material
-        power_rcv = self.nom_power
-        heat_flux_avg = self.heat_flux_avg
+        power_rcv = self.rcv_nom_power.u("MW")
+        heat_flux_avg = self.heat_flux_avg.u("MW/m2")
 
-        receiver_area = TOD.receiver_area.get_value("m2")
+        receiver_area = TOD.receiver_area.u("m2")
 
         #Parameters for receiver
         xO,yO = TOD.perimeter_points(TOD.radius_out.v, tod_index=polygon_i-1)
@@ -626,12 +686,23 @@ class HPR2D():
             N_hels.append(N_new)
             
             it+=1
-        
+
+        self.rcr_power_in: Variable = Variable( P_SF_it, "MW")
+        self.temps_parts = temps_parts
+        self.n_hels: Variable = Variable(N_hel, "-")
+        self.rad_flux_max: Variable = Variable(heat_flux_max, "MW/m2")
+        self.rad_flux_avg: Variable = Variable(heat_flux_avg, "MW/m2")
+        self.heat_stored: Variable = Variable(heat_stored, "MWh")
+        self.eta_rcv: Variable = Variable(eta_rcv, "-")
+        self.mass_stg: Variable = Variable(mass_stg, "kg/s")
+        self.time_res: Variable = Variable(t_res, "m/s")
+        self.vel_p: Variable = Variable(vel_p, "m/s")
+
         rcvr_output = {
-            "temps_parts": temps_parts,
-            "n_hels" : N_hel,
-            "rad_flux_max": heat_flux_max,
-            "rad_flux_avg": heat_flux_avg,
+            # "temps_parts": temps_parts,
+            # "n_hels" : N_hel,
+            # "rad_flux_max": heat_flux_max,
+            # "rad_flux_avg": heat_flux_avg,
             "power_sf_i": P_SF_i,
             "heat_stored": heat_stored,
             "power_sf_total": P_SF_it,
@@ -1146,7 +1217,6 @@ def HTM_2D_tilted_surface(Rcvr, f_Qrc1, f_eta, f_ViewFactor, full_output=False):
     else:
         return [ T_B, Qstg1, M_stg1 ]
 
-
 def rcvr_TPR_0D(CST):
 
     abs_p = 0.91
@@ -1207,8 +1277,8 @@ def rcvr_TPR_0D_corr(
     Fc    = 2.57
     Fv    = 0.4
     air = ct.Solution('air.yaml')
-    T_w   = plant.stg_temp_cold.get_value("K")
-    T_amb = plant.temp_amb.get_value("K")
+    T_w   = plant.stg_temp_cold.u("K")
+    T_amb = plant.temp_amb.u("K")
     beta  = -27.
     tz    = 0.06
     
@@ -1222,10 +1292,10 @@ def rcvr_TPR_0D_corr(
             'air':air, 'beta':beta,'x_ini':x_ini,'x_fin':x_fin, 
             'y_bot':y_bot, 'y_top':y_top, 'tz':tz, 'T_amb':T_amb}
     
-    T_ini  = plant.stg_temp_cold.get_value("K")
-    T_out  = plant.stg_temp_hot.get_value("K")
-    Q_avg  = plant.flux_avg.get_value("MW/m^2")
-    Prcv   = plant.receiver_power.get_value("MW")
+    T_ini  = plant.stg_temp_cold.u("K")
+    T_out  = plant.stg_temp_hot.u("K")
+    Q_avg  = plant.flux_avg.u("MW/m^2")
+    Prcv   = plant.rcv_power.u("MW")
     Tp_avg = (T_ini+T_out)/2.
     eta_rcv = eta_th_tilted(Rcvr, Tp_avg, Q_avg, Fv=Fv)[0]
     
@@ -1814,60 +1884,60 @@ def BDR_cost(SF,CST):
 
 def plant_costing_calculations(
         plant: PlantCSPBeamDownParticle,
-        HB: HyperboloidMirror,
-        TOD: TertiaryOpticalDevice,
-        costs_in: dict,
+        # HB: HyperboloidMirror,
+        # TOD: TertiaryOpticalDevice,
+        # costs_in: dict,
         SF: pd.DataFrame,
-):         # ex BDR_cost
+) -> dict[str,float]:         # ex BDR_cost
 
-    # M_p     = CST['M_p']
-
-    zrc = plant.zrc.get_value("m")
-    A_h1 = plant.Ah1.get_value("m2")
-    T_stg = plant.stg_cap.get_value("hr")
-    SM = plant.solar_multiple.get_value("-")
-    eta_rcv = plant.receiver_eta_des.get_value("-")
-    eta_pb = plant.pb_eta_des.get_value("-")
-    T_pH = plant.stg_temp_hot.get_value("K")
-    T_pC = plant.stg_temp_cold.get_value("K")
-    HtD_stg = plant.stg_h_to_d.get_value("-")
-    Gbn = plant.Gbn.get_value("W/m2")
+    zrc = plant.zrc.u("m")
+    A_h1 = plant.Ah1.u("m2")
+    T_stg = plant.stg_cap.u("hr")
+    SM = plant.solar_multiple.u("-")
+    rcv_eta = plant.rcv_eta_des.u("-")
+    pb_eta = plant.pb_eta_des.u("-")
+    T_pH = plant.stg_temp_hot.u("K")
+    T_pC = plant.stg_temp_cold.u("K")
+    HtD_stg = plant.stg_h_to_d.u("-")
+    Gbn = plant.Gbn.u("W/m2")
+    DNI_min = plant.DNI_min.u("W/m2")
     Ntower = plant.Ntower if hasattr(plant,'Ntower') else 1
 
-    S_HB = HB.surface_area.get_value("m2")
-    zmax = HB.zmax.get_value("m")
+    S_HB = plant.HB.surface_area.u("m2")
+    zmax = plant.HB.zmax.u("m")
 
-    S_TOD = TOD.surface_area.get_value("m2")
-    Arcv = TOD.receiver_area.get_value("m2")
+    S_TOD = plant.TOD.surface_area.u("m2")
+    Arcv = plant.TOD.receiver_area.u("m2")
 
-    M_p = plant.receiver_massflowrate.get_value("kg/s")
+    M_p = plant.rcv_massflowrate.u("kg/s")
     
     #Solar field related costs
-    R_ftl  = costs_in['R_ftl']                   # Field to land ratio, SolarPilot
-    C_land = costs_in['C_land']                  # USD per m2 of land. SAM/SolarPilot (10000 USD/acre)
-    C_site = costs_in['C_site']                 # USD per m2 of heliostat. SAM/SolarPilot
-    C_hel  = costs_in['C_hel']                  # USD per m2 of heliostat. Projected by Pfal et al (2017)
-    C_tpr  = costs_in['C_tpr']                  # [USD/m2]
-    C_tow = costs_in['C_tow']             # USD fixed. SAM/SolarPilot, assumed tower 25% cheaper
-    e_tow = costs_in['e_tow']                 # Scaling factor for tower
-    C_parts = costs_in['C_parts']
+    costs_in = plant.cost_input
+    R_ftl = float(costs_in['R_ftl'])         # Field to land ratio, SolarPilot
+    C_land = float(costs_in['C_land'])       # USD per m2 of land. SAM/SolarPilot (10000 USD/acre)
+    C_site = float(costs_in['C_site'])       # USD per m2 of heliostat. SAM/SolarPilot
+    C_hel = float(costs_in['C_hel'])         # USD per m2 of heliostat. Projected by Pfal et al (2017)
+    C_tpr = float(costs_in['C_tpr'])         # [USD/m2]
+    C_tow = float(costs_in['C_tow'])         # USD fixed. SAM/SolarPilot, assumed tower 25% cheaper
+    e_tow = float(costs_in['e_tow'])         # Scaling factor for tower
+    C_parts = float(costs_in['C_parts'])     # USD/kg (Gonzalez-Portillo et al. 2022). CARBO HSP
     tow_type = costs_in['tow_type']
-    C_OM = costs_in['C_OM']                    # % of capital costs.
-    DR   = costs_in['DR']                    # Discount rate
-    Ny   = costs_in['Ny']                      # Horizon project
-    C_pb    = costs_in['C_pb']                                #USD/MWe
-    C_PHX   = costs_in['C_PHX'] if 'C_PHX' in costs_in else 0.      #USD/MWe
-    C_xtra = costs_in['C_xtra']                   # Engineering and Contingency
+    C_OM = float(costs_in['C_OM'])           # % of capital costs.
+    DR = float(costs_in['DR'])               # Discount rate
+    Ny = float(costs_in['Ny'])               # Horizon project
+    C_pb = float(costs_in['C_pb'])           #USD/MWe
+    C_PHX = float(costs_in['C_PHX']) if 'C_PHX' in costs_in else 0.      #USD/MWe
+    C_xtra = float(costs_in['C_xtra'])       # Engineering and Contingency
     
     #Factors to apply on costs. Usually they are 1.0.
-    F_HB   = costs_in['F_HB']
-    F_TOD  = costs_in['F_TOD']
-    F_rcv  = costs_in['F_rcv']
-    F_tow  = costs_in['F_tow']
-    F_stg  = costs_in['F_stg']
+    F_HB   = float(costs_in['F_HB'])
+    F_TOD  = float(costs_in['F_TOD'])
+    F_rcv  = float(costs_in['F_rcv'])
+    F_tow  = float(costs_in['F_tow'])
+    F_stg  = float(costs_in['F_stg'])
     
     # P_rcv = CST['P_rcv_sim'] if 'P_rcv_sim' in CST else CST['P_rcv'] #[MW] Nominal power stored by receiver
-    P_rcv = plant.receiver_power.get_value("MW")  # [MW] Nominal power stored by receiver
+    P_rcv = plant.rcv_power.u("MW")  # [MW] Nominal power stored by receiver
     P_pb  = P_rcv / SM              #[MWth]  Thermal energy delivered to power block
     Q_stg = P_pb * T_stg            #[MWh]  Energy storage required to meet T_stg
     
@@ -1882,20 +1952,20 @@ def plant_costing_calculations(
             df_w = pd.read_csv(plant.file_weather,header=1)
             DNI_tag = 'DNI (W/m^2)'
             DNI_des = Gbn
-            DNI_min = 400.
+
             F_sf    = 0.9       #Factor to make it conservative
             Qacc    = df_w[df_w[DNI_tag]>=DNI_min][DNI_tag].sum()  #In Wh/m2
             CF_sf  = F_sf * Qacc / (DNI_des*len(df_w))
             CF_pb = CF_sf*SM
         else:
             print('Weather File not found. Default value used for CF_sf')
-            CF_sf  = costs_in['CF_sf']
+            CF_sf  = float(costs_in['CF_sf'])
             CF_pb = CF_sf*SM                      # Assumed all is converted into electricity
     elif plant.type_weather == 'MERRA2':  # Not implemented yet.
-        CF_sf  = costs_in['CF_sf']               # Assumes CF_sf is calculated outside and stored
-        CF_pb  = costs_in['CF_pb']               # Assumes CF_pb is calculated outside and stored
+        CF_sf  = float(costs_in['CF_sf'])        # Assumes CF_sf is calculated outside and stored
+        CF_pb  = float(costs_in['CF_pb'])        # Assumes CF_pb is calculated outside and stored
     else:       #If nothing is given, assumed default values
-        CF_sf = costs_in['CF_sf']
+        CF_sf = float(costs_in['CF_sf'])
         CF_pb = CF_sf*SM
     
     Co['CF_sf'] = CF_sf
@@ -1907,8 +1977,8 @@ def plant_costing_calculations(
     Co['land_prod'] = P_rcv/(S_land/1e4)            #MW/ha
     
     # MIRROR MASSES AND COSTS
-    M_HB_fin  = HB.mass_fin.get_value("ton")          # Fins components of HB weight
-    M_HB_t    = HB.mass_total.get_value("ton")        # Total weight of HB
+    M_HB_fin  = plant.HB.mass_fin.u("ton")          # Fins components of HB weight
+    M_HB_t    = plant.HB.mass_total.u("ton")        # Total weight of HB
     F_struc_hel = 0.17
     zhel        = 4.0
     
@@ -1942,12 +2012,12 @@ def plant_costing_calculations(
     Co['LCOH'] =  get_lcoh(Co['Heat'], C_OM, P_rcv, CF_sf, DR, Ny)  #USD/MWh delivered from receiver
 
     # Levelised cost of electricity (sun-to-electricity)
-    Pel        = Ntower * eta_pb * P_pb           #[MWe]  Nominal power of power block
+    Pel        = Ntower * pb_eta * P_pb           #[MWe]  Nominal power of power block
     Co['PB']   = C_pb * Pel / 1e6
     Co['PHX']  = C_PHX * P_pb / 1e6
     Co['Elec'] = Ntower*Co['Heat'] +  (Co['PHX']+Co['PB']) * C_xtra
     Co['LCOE'] =  get_lcoe(Co['Elec'], C_OM, Pel, CF_pb, DR, Ny)  #USD/MWh
-    
+
     return Co
 
 
@@ -2128,127 +2198,3 @@ def run_coupled_simulation(
     
     return R2, SF, CST
 
-def run_coupled_sim(
-        plant: PlantCSPBeamDownParticle,
-        HSF: SolarField,
-        HB: HyperboloidMirror,
-        TOD: TertiaryOpticalDevice,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-
-    #Getting the RayDataset
-    R0, SF = HSF.load_dataset(save_plk=True)
-
-    #Getting interceptions with HB
-    R1 = HB.mcrt_direct(R0, refl_error=True)
-    R1['hel_in'] = True
-    HB.rmin = Variable( R1['rb'].quantile(0.0001), "m")
-    HB.rmax = Variable( R1['rb'].quantile(0.9981), "m")
-    R1['hit_hb'] = (R1['rb']>HB.rmin.v) & (R1['rb']<HB.rmax.v)
-    
-    SF = HB.shadow_simple(
-        lat=plant.lat.v, lng=plant.lng.v, type_shdw="simple", SF=SF
-    )
-    
-    #Interceptions with TOD
-    R2 = TOD.mcrt_solver(R1, refl_error=False)
-    
-    ### Optical Efficiencies
-    SF = BDR.optical_efficiencies(plant,R2,SF)
-    
-    ### Running receiver simulation and getting the results
-    type_rcv = plant.type_receiver
-    
-    if type_rcv=='HPR_2D':
-        receiver = HPR2D(
-            nom_power =plant.receiver_power.get_value("MW"),
-            heat_flux_avg = plant.flux_avg.get_value("MW/m2"),
-            temp_ini = plant.stg_temp_cold.get_value("K"),
-            temp_out = plant.stg_temp_hot.get_value("K"),
-            material = plant.stg_material,
-            thickness_parts = plant.stg_thickness.get_value("m"),
-            factor_htc = 2.57
-        )
-        rcvr_output = receiver.run_model(TOD,SF,R2)
-    elif type_rcv=='HPR_0D':
-        receiver = HPR0D(
-            nom_power =plant.receiver_power.get_value("MW"),
-            heat_flux_avg = plant.flux_avg.get_value("MW/m2"),
-            temp_ini = plant.stg_temp_cold.get_value("K"),
-            temp_out = plant.stg_temp_hot.get_value("K"),
-            material = plant.stg_material,
-            thickness_parts = plant.stg_thickness.get_value("m"),
-            factor_htc = 2.57
-        )
-        rcvr_output = receiver.run_model(SF)
-    # elif type_rcv=='TPR_2D':
-    #     results, T_p, _, _ = TPR_2D_model(CST, R2, SF, TOD, full_output=True)
-    #     N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, M_p, t_res, vel_p, it, solve_t_res = results
-    #     rcvr_output = {
-    #         "temps_parts": T_p,
-    #         "n_hels": N_hel,
-    #         "rad_flux_max": Q_max,
-    #         "rad_flux_avg": Q_av,
-    #         "heat_stored": Qstg,
-    #         "eta_rcv": eta_rcv,
-    #         "mass_stg": M_p,
-    #         "time_res": t_res,
-    #         "vel_p": vel_p
-    #     }
-    # elif type_rcv=='TPR_0D':
-    #     rcvr_output = rcvr_TPR_0D_corr(CST, TOD, SF)
-    # elif type_rcv in ['SEVR','None']:
-    #     Prcv, eta_rcv, Qavg = CST['P_rcv'], CST['eta_rcv'], CST["Qavg"]
-    #     P_bdr = Prcv / eta_rcv
-    #     Q_acc    = SF['Q_h1'].cumsum()
-    #     N_hel    = len( Q_acc[ Q_acc < P_bdr ] ) + 1
-
-    #     rcvr_output = {
-    #         "temps_parts" : plant.stg_temp_hot.get_value("K"),
-    #         "n_hels" : len( Q_acc[ Q_acc < P_bdr ] ) + 1,
-    #         "rad_flux_max" : np.nan,            #No calculated
-    #         "rad_flux_avg" : Qavg,
-    #         "heat_stored": np.nan,            #No calculated
-    #         "eta_rcv": eta_rcv,
-    #         "mass_stg": np.nan,
-    #         "time_res": np.nan,
-    #         "vel_p": np.nan,
-    #     }
-    else:
-        raise ValueError(f"Receiver type '{type_rcv}' not recognized. Use 'HPR_2D', 'TPR_2D', 'HPR_0D', 'TPR_0D', 'SEVR' or 'None'.")
-
-    T_p = rcvr_output["temps_parts"]
-    N_hel = rcvr_output["n_hels"]
-    Qstg = rcvr_output["heat_stored"]
-    M_p = rcvr_output["mass_stg"]
-    eta_rcv = rcvr_output["eta_rcv"]
-
-    # Outputs
-    
-    # Heliostat selection
-    Gbn = plant.Gbn.get_value("W/m2")
-    A_h1 = plant.Ah1.get_value("m2")
-    Q_acc    = SF['Q_h1'].cumsum()
-    hlst     = Q_acc.iloc[:N_hel].index
-    SF['hel_in'] = SF.index.isin(hlst)
-    R2['hel_in'] = R2['hel'].isin(hlst)
-
-    plant.sf_n_hels = Variable(N_hel, "-")
-    plant.sf_power  = Variable( SF[SF.hel_in]['Q_h1'].sum(), "MW")
-    plant.receiver_power = Variable(plant.sf_power.v * eta_rcv, "MW")
-    plant.sf_area = Variable(N_hel * A_h1, "m2")
-    plant.receiver_massflowrate = Variable(M_p, "kg/s")
-    
-    # Calculating HB surface
-    HB.rmin = Variable(R2[R2.hel_in]['rb'].quantile(0.0001), "m")
-    HB.rmax = Variable(R2[R2.hel_in]['rb'].quantile(0.9981), "m")
-    R2['hit_hb'] = (R2['rb']>HB.rmin.v)&(R2['rb']<HB.rmax.v)
-    
-    HB.update_geometry(R2)
-    HB.height_range()
-    HB.calculate_mass(R2, SF, Gbn, A_h1)
-    
-    #Costing calculation
-    costs_in = get_plant_costs()
-    costs_out = plant_costing_calculations(plant, HB, TOD, costs_in, SF)
-    
-    return R2, SF, costs_out

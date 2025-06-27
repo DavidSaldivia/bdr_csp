@@ -17,6 +17,7 @@ pvlib = "^0.11.0"
 xarray = "^2025.1.1"
 netcdf4 = "^1.7.2"
 polars = "^1.30.0"
+fsspec = "^2025.5.1"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.11.0"

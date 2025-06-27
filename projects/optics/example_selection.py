@@ -486,7 +486,7 @@ def run_parametric(
             ] )+'\t'
             + '\t'.join('{:.2f}'.format(x) for x in [
                 Pel_real, N_hel, S_hel,
-                HB.area.get_value("m2"),
+                HB.surface_area.get_value("m2"),
                 TOD.surface_area.get_value("m2"),
                 TOD.height.get_value("m"),
                 TOD.radius_out.get_value("m"),
@@ -503,7 +503,7 @@ def run_parametric(
                 ]
             ] + [
                 Pel_real, N_hel, S_hel,
-                HB.area.get_value("m2"), 
+                HB.surface_area.get_value("m2"), 
                 TOD.surface_area.get_value("m2"),
                 TOD.height.get_value("m"),
                 TOD.radius_out.get_value("m"),
