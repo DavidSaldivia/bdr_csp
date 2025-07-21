@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass, field
 
 from collections.abc import Callable
-from typing import TypedDict, TYPE_CHECKING, Union, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import pandas as pd
 import numpy as np
@@ -29,7 +29,7 @@ from bdr_csp.bdr import (
 )
 
 if TYPE_CHECKING:
-    from bdr_csp.PowerCycle import PlantCSPBeamDownParticle
+    from bdr_csp.pb import PlantCSPBeamDownParticle
 
 COLS_INPUT = [
     'location',
@@ -80,17 +80,6 @@ class Carbo():
     alpha = _alpha_carbo
     absortivity = Variable(0.91, "-")  # Absorptivity
     emi = Variable(0.85, "-")  # Emissivity
-
-# class ReceiverOutput(TypedDict):
-#     temps_parts: np.ndarray
-#     n_hels: int
-#     rad_flux_max: float
-#     rad_flux_avg: float | None
-#     heat_stored: float | None
-#     eta_rcv: float
-#     mass_stg: float | None
-#     time_res: float | None
-#     vel_p: float | None
 
 
 def HTM_0D_blackbox(

@@ -136,7 +136,7 @@ def parametric_radiative_fraction_plot(
     ax2.grid()
 
     if figname is not None:
-        fig.savefig(os.path.join(DIR_PROJECT,figname), bbox_inches='tight')
+        fig.savefig(os.path.join(DIR_RESULTS,figname), bbox_inches='tight')
     if showfig:
         plt.show()
     return None

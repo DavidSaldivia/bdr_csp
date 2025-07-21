@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 from antupy.units import Variable
 
-import bdr_csp.PowerCycle as ppc
+import bdr_csp.pb as ppc
 
 DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
 

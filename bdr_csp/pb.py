@@ -579,8 +579,8 @@ def load_spotprice_data(
     )
     return df_sp_state
 
-class CO2:
-    _ct_solution = ct.Solution('gri30.yaml','gri30')
+class CO2():
+    _ct_solution = ct.Solution('gri30.yaml','gri30') # type: ignore
     def cp(self, temp: float, pressure: float) -> float:
         # Calculate specific heat capacity of CO2 at given temperature and pressure
         self._ct_solution.TPY = temp, pressure, 'CO2:1.00'

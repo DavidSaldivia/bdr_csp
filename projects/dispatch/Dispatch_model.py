@@ -9,7 +9,7 @@ import sys
 import time
 from os.path import isfile
 from scipy.interpolate import interp1d
-import bdr_csp.PowerCycle as PPC
+import bdr_csp.pb as PPC
 
 pd.set_option('display.max_columns', None)
 

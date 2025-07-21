@@ -17,7 +17,7 @@ from pvlib.location import Location
 from antupy.units import (Variable, conversion_factor as CF)
 
 if TYPE_CHECKING:
-    from bdr_csp.PowerCycle import PlantCSPBeamDownParticle
+    from bdr_csp.pb import PlantCSPBeamDownParticle
 
 
 R0_COLS = ['xi','yi','zi', 'uxi','uyi','uzi', 'hel']
