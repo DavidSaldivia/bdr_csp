@@ -7,14 +7,22 @@ license = "GNU"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">=3.12,<3.14"
 pandas = "^2.2.2"
 numpy = "^2.0.1"
 scipy = "^1.14.0"
 Cantera = "^3.0.1"
+matplotlib = "^3.9.1"
+pvlib = "^0.11.0"
+xarray = "^2025.1.1"
+netcdf4 = "^1.7.2"
+polars = "^1.30.0"
+fsspec = "^2025.5.1"
+antupy = {path = "C:/Users/david/projects/antupy", develop = true}
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.11.0"
+pytest = "^8.3.2"
 
 [build-system]
 requires = ["poetry-core"]

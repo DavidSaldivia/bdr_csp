@@ -6,32 +6,22 @@ Created on Mon May 25 18:47:41 2020
 
 """
 
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp2d
 import scipy.optimize as spo
-from scipy.integrate import quad
 import cantera as ct
-from functools import partial
 from matplotlib import cm
 import matplotlib.patches as patches
-from mpl_toolkits.mplot3d import Axes3D
-from importlib import reload
-from multiprocessing import Pool
-from os.path import isfile
-import gc
-import BDR
-import AntuPy as AP
 
-#####################################################
-#####################################################
+from bdr_csp import bdr as BDR
+from antupy.solar import Sun
 
 
 ####################################
 
-def A_rqrd(rO,*args):
+def A_rqrd(rO, *args):
 #This function is to calculate the required area given some
     A_rcv_rq,Dsgn,CST,Cg = args
     xrc,yrc,zrc = CST['xrc'],CST['yrc'],CST['zrc']
@@ -383,11 +373,11 @@ plt.colorbar(mapp,cax=cbar_ax,ticks=np.linspace(vmin,vmax,int(lvs/2)+1))
 cbar.set_label('Optical efficiency ', rotation=-270, fontsize=f_s)
 
 
-sol = AP.Sun()
+sol = Sun()
 dfs = []
 days = [80,172,355];
 for (N,t) in [(N,t) for N in days for t in np.arange(5,12.1,0.1)]:
-    sol = AP.Sun()
+    sol = Sun()
     sol.lat = -25.
     sol.lng = 133.9
     sol.update(N=N,t=t,UTC=9.5)
@@ -493,7 +483,7 @@ for (T_stg,SM) in [(T_stg,SM) for T_stg in np.arange(8,8.1,4) for SM in np.arang
     for idx,row in TMY.iterrows():
         
         if row['DNI']>0:
-            sol = AP.Sun()
+            sol = Sun()
             sol.lat = -23.8
             sol.lng = 133.8
             sol.update(N=row['N'],t=row['t'],UTC=9.5)
