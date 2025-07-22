@@ -14,7 +14,7 @@ from scipy.optimize import fsolve
 from scipy.integrate import quad
 from pvlib.location import Location
 
-from antupy.units import (Variable, conversion_factor as CF)
+from antupy import Var
 
 if TYPE_CHECKING:
     from bdr_csp.pb import PlantCSPBeamDownParticle
@@ -35,12 +35,12 @@ R2_COLS = ['hel','xi','yi','zi',
 @dataclass
 class SolarField():
     # Characteristics of Solar Field
-    zf: Variable = Variable(50., "m")
-    eta_sfr: Variable = Variable(0.97*0.95*0.95, "-")   # Solar field reflectivity
-    eta_rfl: Variable = Variable(0.95, "m")             # Includes mirror refl, soiling and refl. surf. ratio. Used for HB and CPC
-    err_x: Variable = Variable(0.001, "rad")            # Reflected error mirror in X direction
-    err_y: Variable = Variable(0.001, "rad")            # Reflected error mirror in X direction
-    A_h1: Variable = Variable(2.97**2,"m2")             # Area of one heliostat
+    zf: Var = Var(50., "m")
+    eta_sfr: Var = Var(0.97*0.95*0.95, "-")   # Solar field reflectivity
+    eta_rfl: Var = Var(0.95, "m")             # Includes mirror refl, soiling and refl. surf. ratio. Used for HB and CPC
+    err_x: Var = Var(0.001, "rad")            # Reflected error mirror in X direction
+    err_y: Var = Var(0.001, "rad")            # Reflected error mirror in X direction
+    A_h1: Var = Var(2.97**2,"m2")             # Area of one heliostat
     N_pan: int = 1                                      # Number of panels per heliostat
     file_SF: str|None = None                            # File with the rays data
     helios: pd.DataFrame|None = None                    # heliostats DataFrame
@@ -135,38 +135,38 @@ class SolarField():
 
 @dataclass
 class HyperboloidMirror():
-    zf: Variable = Variable(50., "m")
-    fzv: Variable = Variable(0.83, "-")
-    xrc: Variable = Variable(0.0, "m")
-    yrc: Variable = Variable(0.0, "m")
-    zrc: Variable = Variable(0.0, "m")
-    eta_hbi: Variable = Variable(0.95, "-")
-    eta_rfl: Variable = Variable(0.95, "-")
+    zf: Var = Var(50., "m")
+    fzv: Var = Var(0.83, "-")
+    xrc: Var = Var(0.0, "m")
+    yrc: Var = Var(0.0, "m")
+    zrc: Var = Var(0.0, "m")
+    eta_hbi: Var = Var(0.95, "-")
+    eta_rfl: Var = Var(0.95, "-")
 
     #output
-    rmin: Variable = Variable(None,"m")
-    rmax: Variable = Variable(None,"m")
-    zmin: Variable = Variable(None,"m")
-    zmax: Variable = Variable(None,"m")
-    surface_area: Variable = Variable(None,"m2")
+    rmin: Var = Var(None,"m")
+    rmax: Var = Var(None,"m")
+    zmin: Var = Var(None,"m")
+    zmax: Var = Var(None,"m")
+    surface_area: Var = Var(None,"m2")
 
-    mass_total = Variable(None,"kg")
-    mass_mirror = Variable(None,"kg")
-    mass_structure = Variable(None,"kg")
-    mass_fin = Variable(None,"kg")
+    mass_total = Var(None,"kg")
+    mass_mirror = Var(None,"kg")
+    mass_structure = Var(None,"kg")
+    mass_fin = Var(None,"kg")
 
     @property
-    def zv(self) -> Variable:
-        return Variable(self.zf.get_value("m") * self.fzv.get_value("-"), "m")
+    def zv(self) -> Var:
+        return Var(self.zf.gv("m") * self.fzv.gv("-"), "m")
 
     def height_range(self) -> tuple[float, float]:       # HB_zrange
-        zf = self.zf.get_value("m")
-        zrc = self.zrc.get_value("m")
-        fzv = self.fzv.get_value("-")
+        zf = self.zf.gv("m")
+        zrc = self.zrc.gv("m")
+        fzv = self.fzv.gv("-")
 
-        if isinstance(self.rmin, Variable) and isinstance(self.rmax, Variable):
-            rmin = self.rmin.get_value("m")
-            rmax = self.rmax.get_value("m")
+        if isinstance(self.rmin, Var) and isinstance(self.rmax, Var):
+            rmin = self.rmin.gv("m")
+            rmax = self.rmax.gv("m")
         else:
             raise ValueError("rmin and/or rmax has/have not been defined.")
         
@@ -179,8 +179,8 @@ class HyperboloidMirror():
         b = 2*c*np.sqrt(fvh - fvh**2)
         zmin = (rmin**2/b**2 + 1 )**0.5*a + zo
         zmax = (rmax**2/b**2 + 1 )**0.5*a + zo
-        self.zmin: Variable = Variable(zmin,"m")
-        self.zmax: Variable = Variable(zmax,"m")
+        self.zmin: Var = Var(zmin,"m")
+        self.zmax: Var = Var(zmax,"m")
         return (zmin,zmax)
 
 
@@ -189,11 +189,11 @@ class HyperboloidMirror():
             R1: pd.DataFrame,
         ) -> None:
         
-        zf = self.zf.get_value("m")
-        zv = self.zv.get_value("m")
-        zrc = self.zrc.get_value("m")
-        yrc = self.yrc.get_value("m")
-        eta_hbi = self.eta_hbi.get_value("-")
+        zf = self.zf.gv("m")
+        zv = self.zv.gv("m")
+        zrc = self.zrc.gv("m")
+        yrc = self.yrc.gv("m")
+        eta_hbi = self.eta_hbi.gv("-")
         
         zfh = zf - zrc
         zvh = zv - zrc
@@ -216,9 +216,9 @@ class HyperboloidMirror():
             rmax = R1['rb'].quantile(qmin+eta_hbi)
         
         surface_area = quad(S_int,rmin,rmax)[0]
-        self.rmin = Variable(rmin,"m")
-        self.rmax = Variable(rmax,"m")
-        self.surface_area = Variable(surface_area,"m2")
+        self.rmin = Var(rmin,"m")
+        self.rmax = Var(rmax,"m")
+        self.surface_area = Var(surface_area,"m2")
         return None
 
 
@@ -228,10 +228,10 @@ class HyperboloidMirror():
             refl_error: bool = True
         ) -> pd.DataFrame:
         
-        zf = self.zf.get_value("m")
-        fzv = self.fzv.get_value("-")
-        zrc = self.zrc.get_value("m")
-        yrc = self.yrc.get_value("m")
+        zf = self.zf.gv("m")
+        fzv = self.fzv.gv("-")
+        zrc = self.zrc.gv("m")
+        yrc = self.yrc.gv("m")
         
         #hyperboloid geometry calculations
         zv = fzv*zf
@@ -297,10 +297,10 @@ class HyperboloidMirror():
             refl_error: bool = True
         ) -> pl.DataFrame:
         
-        zf = self.zf.get_value("m")
-        fzv = self.fzv.get_value("-")
-        zrc = self.zrc.get_value("m")
-        yrc = self.yrc.get_value("m")
+        zf = self.zf.gv("m")
+        fzv = self.fzv.gv("-")
+        zrc = self.zrc.gv("m")
+        yrc = self.yrc.gv("m")
         
         #hyperboloid geometry calculations
         zv = fzv*zf
@@ -385,10 +385,10 @@ class HyperboloidMirror():
             hels: pd.DataFrame
         ) -> pd.DataFrame:
         
-        rmax = self.rmax.get_value("m")
+        rmax = self.rmax.gv("m")
         self.height_range()
-        zmin = self.zmin.get_value("m")
-        zmax = self.zmax.get_value("m")
+        zmin = self.zmin.gv("m")
+        zmax = self.zmax.gv("m")
 
         alt_r, azi_r = np.radians(alt), np.radians(azi)
         shd_mx = zmax / np.tan(alt_r) + rmax
@@ -418,10 +418,10 @@ class HyperboloidMirror():
             SF['r_sh'] = 1
             SF['f_sh'] = 1
 
-        rmax = self.rmax.get_value("m")
+        rmax = self.rmax.gv("m")
         self.height_range()
-        zmin = self.zmin.get_value("m")
-        zmax = self.zmax.get_value("m")
+        zmin = self.zmin.gv("m")
+        zmax = self.zmax.gv("m")
         
         Ns = [4,34,64,95,125,156,186,217,246,277,307,338]
         tdelta = 0.25
@@ -467,9 +467,9 @@ class HyperboloidMirror():
         A_h1: float = 2.92**2,
     ) -> None:
 
-        rmin = self.rmin.get_value("m")
-        rmax = self.rmax.get_value("m")
-        eta_rfl = self.eta_rfl.get_value("-")
+        rmin = self.rmin.gv("m")
+        rmax = self.rmax.gv("m")
+        eta_rfl = self.eta_rfl.gv("-")
 
         Etas = SF[SF['hel_in']].mean()
         hlst = SF[SF.hel_in].index
@@ -505,10 +505,10 @@ class HyperboloidMirror():
                 HB: HyperboloidMirror
             ) -> np.ndarray:
             
-            zf = HB.zf.get_value("m")
-            fzv = HB.fzv.get_value("-")
-            zrc = HB.zrc.get_value("m")
-            yrc = HB.yrc.get_value("m")
+            zf = HB.zf.gv("m")
+            fzv = HB.fzv.gv("-")
+            zrc = HB.zrc.gv("m")
+            yrc = HB.yrc.gv("m")
             zfh,zvh = zf-zrc, fzv*zf-zrc
             fvh = zvh/zfh
             c = zfh/2
@@ -546,10 +546,10 @@ class HyperboloidMirror():
         M_str_tot = M_beams*S_HB / 1e3                                            #[tonnes]
         M_HB_tot  = M_fin_tot + M_mirr_tot + M_str_tot                            #[tonnes]
         
-        self.mass_total = Variable(M_HB_tot, "ton")
-        self.mass_mirror = Variable(M_mirr_tot, "ton")
-        self.mass_structure = Variable(M_str_tot, "ton")
-        self.mass_fin = Variable(M_fin_tot, "ton")
+        self.mass_total = Var(M_HB_tot, "ton")
+        self.mass_mirror = Var(M_mirr_tot, "ton")
+        self.mass_structure = Var(M_str_tot, "ton")
+        self.mass_fin = Var(M_fin_tot, "ton")
 
         return None
 
@@ -557,15 +557,15 @@ class HyperboloidMirror():
 class TertiaryOpticalDevice():
     geometry: str | None = None
     array: str | None = "A"
-    xrc: Variable = Variable(0.0,"m")
-    yrc: Variable = Variable(0.0,"m")
-    zrc: Variable = Variable(0.0,"m")
+    xrc: Var = Var(0.0,"m")
+    yrc: Var = Var(0.0,"m")
+    zrc: Var = Var(0.0,"m")
     
-    radius_ap: Variable= Variable(None, "m")
-    radius_out: Variable= Variable(None, "m")
-    height: Variable= Variable(None, "m")
-    Cg: Variable= Variable(None, "-")
-    receiver_area: Variable= Variable(None, "m2")
+    radius_ap: Var= Var(None, "m")
+    radius_out: Var= Var(None, "m")
+    height: Var= Var(None, "m")
+    Cg: Var= Var(None, "-")
+    receiver_area: Var= Var(None, "m2")
 
     def __post_init__(self):
         self.update_params()
@@ -581,14 +581,14 @@ class TertiaryOpticalDevice():
         #For Paraboloid, it requires two of the following parameters: rA, rO, H, Cg, Arcv
         if geometry == 'PB':
             if self.radius_ap.v is not np.nan and self.radius_out.v is not np.nan:
-                rA = self.radius_ap.get_value("m")
-                rO = self.radius_out.get_value("m")
+                rA = self.radius_ap.gv("m")
+                rO = self.radius_out.gv("m")
                 H  = rA**2 - rO**2
                 Cg = (rA/rO)**2                      #Concentration ratio of each TOD
                 
             elif self.radius_ap.v is not np.nan and self.height.v is not np.nan:
-                rA = self.radius_ap.get_value("m")
-                H = self.height.get_value("m")
+                rA = self.radius_ap.gv("m")
+                H = self.height.gv("m")
                 
                 rO    = (rA**2 - H)**0.5               # Check if it is over limits
                 if rO<0:
@@ -598,26 +598,26 @@ class TertiaryOpticalDevice():
                 Cg = (rA/rO)**2
             
             elif self.radius_ap.v is not np.nan and self.Cg.v is not np.nan:
-                rA = self.radius_ap.get_value("m")
-                Cg = self.Cg.get_value("-")
+                rA = self.radius_ap.gv("m")
+                Cg = self.Cg.gv("-")
                 rO    = rA/Cg**0.5
                 H     = rA**2 - rO**2
             
             elif self.radius_out.v is not np.nan and self.height.v is not np.nan:
-                rO = self.radius_out.get_value("m")
-                H = self.height.get_value("m")
+                rO = self.radius_out.gv("m")
+                H = self.height.gv("m")
                 rA    = (H + rO**2)**0.5
                 Cg    = (rA/rO)**2
             
             elif self.radius_out.v is not np.nan and self.Cg.v is not np.nan:
-                rO = self.radius_out.get_value("m")
-                Cg = self.Cg.get_value("-")
+                rO = self.radius_out.gv("m")
+                Cg = self.Cg.gv("-")
                 rA    = rO*Cg**0.5
                 H     = rA**2-rO**2
             
             elif self.receiver_area.v is not np.nan and self.Cg.v is not np.nan:
-                Arcv = self.receiver_area.get_value("m2")
-                Cg = self.Cg.get_value("-")
+                Arcv = self.receiver_area.gv("m2")
+                Cg = self.Cg.gv("-")
                 rO = (Arcv / ( V*N*np.tan(np.pi/V) ) )**0.5
                 rA    = rO*Cg**0.5
                 H     = rA**2-rO**2
@@ -639,8 +639,8 @@ class TertiaryOpticalDevice():
             
         #For CPC, for now, it only accepts rO and Cg as initial parameters
         elif geometry =='CPC':
-            rO = self.radius_out.get_value("m")
-            Cg = self.Cg.get_value("-")
+            rO = self.radius_out.gv("m")
+            Cg = self.Cg.gv("-")
 
             RtD = 180./np.pi
             rA = rO * Cg**0.5
@@ -680,8 +680,8 @@ class TertiaryOpticalDevice():
         elif (geometry is None) or (geometry == 'N'):
             array = 'N'
             N,V,phi,S1,H,Cg, = 0,0,0,0,0,1
-            rO = self.radius_out.get_value("m")
-            rA = self.radius_ap.get_value("m")
+            rO = self.radius_out.gv("m")
+            rA = self.radius_ap.gv("m")
             S_TOD = np.nan
             theta = np.nan
             tht = np.nan
@@ -692,20 +692,20 @@ class TertiaryOpticalDevice():
             raise ValueError("Wrong geometry type, it must be 'PB', 'CPC' or None")
         
         ## Creating the object
-        self.radius_ap = Variable(rA,"m")
-        self.radius_out = Variable(rO,"m")
-        self.height = Variable(H,"m")
-        self.Cg = Variable(Cg,"-")
-        self.surface_area = Variable(S_TOD,"m2")
-        self.aperture_area = Variable( (V*rA**2*np.tan(phi/2)*N), "m2" )
-        self.receiver_area = Variable( V * rO**2 * np.tan(phi/2) * N, "m2" )
+        self.radius_ap = Var(rA,"m")
+        self.radius_out = Var(rO,"m")
+        self.height = Var(H,"m")
+        self.Cg = Var(Cg,"-")
+        self.surface_area = Var(S_TOD,"m2")
+        self.aperture_area = Var( (V*rA**2*np.tan(phi/2)*N), "m2" )
+        self.receiver_area = Var( V * rO**2 * np.tan(phi/2) * N, "m2" )
         self.x0 = self.array_centers()[0]
         self.y0 = self.array_centers()[1]
-        self.theta = Variable(theta,"rad")
+        self.theta = Var(theta,"rad")
         self._tht = tht
-        self.focal_length = Variable(fl,"m")
-        self.zmin = Variable(zmin,"m")
-        self.zmax = Variable(zmax,"m")
+        self.focal_length = Var(fl,"m")
+        self.zmin = Var(zmin,"m")
+        self.zmax = Var(zmax,"m")
 
         return None
     
@@ -743,9 +743,9 @@ class TertiaryOpticalDevice():
         """
         
         V_TOD = self.n_sides
-        rA = self.radius_ap.get_value("m")
-        xrc = self.xrc.get_value("m")
-        yrc = self.yrc.get_value("m")
+        rA = self.radius_ap.gv("m")
+        xrc = self.xrc.gv("m")
+        yrc = self.yrc.gv("m")
 
         phi   = np.radians(360/V_TOD) if (V_TOD > 0) else 2*np.pi
         match self.array:
@@ -810,7 +810,7 @@ class TertiaryOpticalDevice():
     def limits(self) -> tuple[float,float,float,float]:
         xCA, yCA = [],[]
         for i in range(self.n_tods):
-            xA, yA = self.perimeter_points(self.radius_ap.get_value("m"), tod_index=i)
+            xA, yA = self.perimeter_points(self.radius_ap.gv("m"), tod_index=i)
             xCA.append(xA)
             yCA.append(yA)
         xCA=np.array(xCA)
@@ -850,15 +850,15 @@ class TertiaryOpticalDevice():
         array = self.array
         N_TOD = self.n_tods
         V_TOD = self.n_sides
-        H_TOD = self.height.get_value("m")
-        rA = self.radius_ap.get_value("m")
-        rO = self.radius_out.get_value("m")
+        H_TOD = self.height.gv("m")
+        rA = self.radius_ap.gv("m")
+        rO = self.radius_out.gv("m")
         x0 = self.x0
         y0 = self.y0
-        zmin = self.zmin.get_value("m")
-        zmax = self.zmax.get_value("m")
-        Cg = self.Cg.get_value("-")
-        zrc = self.zrc.get_value("m")
+        zmin = self.zmin.gv("m")
+        zmax = self.zmax.gv("m")
+        Cg = self.Cg.gv("-")
+        zrc = self.zrc.gv("m")
 
         #If there is no TOD, the function return R2==R1 with some extra labels
         if array=='N':
@@ -1014,6 +1014,8 @@ class TertiaryOpticalDevice():
                 elif geometry == 'PB':
                     Fk_a = PB_Fk(k_a, R2, V_TOD)
                     Fk_b = PB_Fk(k_b, R2, V_TOD)
+                else:
+                    raise ValueError(f"{geometry} is not allowed.")
                 
                 sol_1 = (Fk_a*Fk_b < 0)
                 R2rjct = R2[~sol_1]
@@ -1251,8 +1253,8 @@ def heliostat_selection(
     ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, str]:
 
     type_shdw = CST['type_shdw'] if 'type_shdw' in CST else 'None'
-    eta_hbi = HB.eta_hbi.get_value("-")
-    A_h1 = CST["A_h1"].get_value("m2")
+    eta_hbi = HB.eta_hbi.gv("-")
+    A_h1 = CST["A_h1"].gv("m2")
     lat = CST["lat"]
     lng = CST["lng"]
 
@@ -1296,8 +1298,8 @@ def heliostat_selection(
     while True:     #loop to make converge the number of heliostats and hyperboloid size
 
         HB.update_geometry(R1)
-        hb_rmin = HB.rmin.get_value("m")
-        hb_rmax = HB.rmax.get_value("m")
+        hb_rmin = HB.rmin.gv("m")
+        hb_rmax = HB.rmax.gv("m")
         R1['hit_hb'] = ( (R1['rb']>hb_rmin) & (R1['rb']<hb_rmax) )
 
         # Altitude = (90° - lat). Azimuth = 0.
@@ -1337,7 +1339,7 @@ def heliostat_selection(
 
         # Writing the results for partial iteration
         if verbose:
-            hb_area = HB.surface_area.get_value("m2")
+            hb_area = HB.surface_area.gv("m2")
             
             text_r = '\t'.join('{:.4f}'.format(x) for x in [
                 Nit, eta_hbi, N_hel, hb_area,
@@ -1394,9 +1396,9 @@ def optical_efficiencies(
 
     """
     
-    Gbn = plant.Gbn.get_value("W/m2")
-    A_h1 = plant.Ah1.get_value("m2")
-    eta_rfl = plant.eta_rfl.get_value("-")
+    Gbn = plant.Gbn.gv("W/m2")
+    A_h1 = plant.Ah1.gv("m2")
+    eta_rfl = plant.eta_rfl.gv("-")
     
     SF2 = R2.groupby('hel')[['hel_in','hit_hb','hit_tod','hit_rcv']].sum()
     SF['Eta_att'] = get_eta_attenuation(R2)
@@ -1566,9 +1568,9 @@ def HB_mass_cooling(
         full_results: bool = False
     ) -> tuple[tuple,tuple] | tuple:
 
-    rmin = HB.rmin.get_value("m")
-    rmax = HB.rmax.get_value("m")
-    eta_rfl = HB.eta_rfl.get_value("-")
+    rmin = HB.rmin.gv("m")
+    rmax = HB.rmax.gv("m")
+    eta_rfl = HB.eta_rfl.gv("-")
 
     Etas = SF[SF['hel_in']].mean()
     hlst = SF[SF.hel_in].index
@@ -1604,10 +1606,10 @@ def HB_mass_cooling(
             HB: HyperboloidMirror
         ) -> np.ndarray:
         
-        zf = HB.zf.get_value("m")
-        fzv = HB.fzv.get_value("-")
-        zrc = HB.zrc.get_value("m")
-        yrc = HB.yrc.get_value("m")
+        zf = HB.zf.gv("m")
+        fzv = HB.fzv.gv("-")
+        zrc = HB.zrc.gv("m")
+        yrc = HB.yrc.gv("m")
         zfh,zvh = zf-zrc, fzv*zf-zrc
         fvh = zvh/zfh
         c = zfh/2
