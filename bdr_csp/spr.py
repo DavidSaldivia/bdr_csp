@@ -10,17 +10,20 @@ import sys
 from dataclasses import dataclass, field
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, Any
 
 import pandas as pd
 import numpy as np
 import cantera as ct
 import scipy.optimize as spo
 import scipy.interpolate as spi
+
 from antupy import Var
+from antupy.props import Air, Carbo
+from antupy import htc
 
 from bdr_csp import bdr as BDR
-from bdr_csp import htc
+import bdr_csp.htc
 
 from bdr_csp.bdr import (
     SolarField,
@@ -31,8 +34,9 @@ from bdr_csp.bdr import (
 if TYPE_CHECKING:
     from bdr_csp.pb import PlantCSPBeamDownParticle
 
-air = ct.Solution('air.yaml')
-P_atm = ct.one_atm
+# air = ct.Solution('air.yaml')
+air = Air()
+# P_atm = ct.one_atm
 
 COLS_INPUT = [
     'location',
@@ -56,40 +60,40 @@ COLS_OUTPUT = [
 ]
 
 
-@dataclass
-class SolidMaterial(Protocol):
-    """Protocol for materials used in receivers."""
-    rho: Var | Callable[[float],float] = Var(None, "kg/m3")
-    cp: Var | Callable[[float],float] = Var(None, "J/kg-K")
-    cond: Var | Callable[[float],float] = Var(None, "W/m-K")
-    alpha: Var | Callable[[float],float] = Var(None, "m2/s")
-    absortivity: Var | Callable[[float],float] = Var(None, "-")
-    emi: Var | Callable[[float],float] = Var(None, "-")
+# @dataclass
+# class SolidMaterial(Protocol):
+#     """Protocol for materials used in receivers."""
+#     rho: Var | Callable[[float],float] = Var(None, "kg/m3")
+#     cp: Var | Callable[[float],float] = Var(None, "J/kg-K")
+#     cond: Var | Callable[[float],float] = Var(None, "W/m-K")
+#     alpha: Var | Callable[[float],float] = Var(None, "m2/s")
+#     absortivity: Var | Callable[[float],float] = Var(None, "-")
+#     emi: Var | Callable[[float],float] = Var(None, "-")
 
 
-def _cp_carbo(self, T: float) -> float:
-    """Specific heat capacity for CARBO material. T in [K]"""
-    return 148 * T**0.3093
+# def _cp_carbo(self, T: float) -> float:
+#     """Specific heat capacity for CARBO material. T in [K]"""
+#     return 148 * T**0.3093
 
-def _alpha_carbo(self, T: float) -> float:
-    """Thermal diffusivity for CARBO material. T in [K]"""
-    return 0.7 / (1810 * self._cp_carbo(T))
+# def _alpha_carbo(self, T: float) -> float:
+#     """Thermal diffusivity for CARBO material. T in [K]"""
+#     return 0.7 / (1810 * self._cp_carbo(T))
 
-@dataclass(frozen=True)
-class Carbo():
-    rho =  Var(1810, "kg/m3")
-    cp = _cp_carbo
-    cond = Var(0.7, "W/m-K")  # Thermal conductivity
-    alpha = _alpha_carbo
-    absortivity = Var(0.91, "-")  # Absorptivity
-    emi = Var(0.85, "-")  # Emissivity
+# @dataclass(frozen=True)
+# class Carbo():
+#     rho =  Var(1810, "kg/m3")
+#     cp = _cp_carbo
+#     cond = Var(0.7, "W/m-K")  # Thermal conductivity
+#     alpha = _alpha_carbo
+#     absortivity = Var(0.91, "-")  # Absorptivity
+#     emi = Var(0.85, "-")  # Emissivity
 
 
 def HTM_0D_blackbox(
         Tp: float,
         qi: float,
         Fc: float = 2.57,
-        air = air,
+        air: Air = air,
         HTC: str = 'NellisKlein',
         view_factor: float | None = None
     ) -> tuple[float,float,float]:
@@ -113,13 +117,11 @@ def HTM_0D_blackbox(
     em_p = 0.85
     Tp = float(Tp)
     Tsky = Tamb -15.
-    air.TP = (Tp+Tamb)/2., P_atm
-    if HTC == 'NellisKlein':
-        hconv = Fc* htc.h_conv_NellisKlein(Tp, Tamb, 0.01, air)
-    elif HTC == 'Holman':
-        hconv = Fc* htc.h_conv_Holman(Tp, Tamb, 0.01, air)
+    # air.TP = (Tp+Tamb)/2., P_atm
+    if HTC in ['NellisKlein', "Holman"]:
+        hconv = Fc* htc.h_horizontal_surface_upper_hot(Tp, Tamb, 0.01, fluid=air, correlation=HTC)
     elif HTC == 'Experiment':
-        hconv = Fc* htc.h_conv_Experiment(Tp, Tamb, 0.1, air)
+        hconv = Fc* bdr_csp.htc.h_conv_Experiment(Tp, Tamb, 0.1, fluid=air)
     else:
         raise ValueError(f"HTC {HTC} not implemented")
     if view_factor is None:
@@ -363,7 +365,7 @@ def HTM_3D_moving_particles(CST,TOD,inputs,f_Qrc1,f_eta,full_output=True):
 
 def get_func_eta():
     Fc = 2.57
-    air  = ct.Solution('air.yaml')
+    air  = Air()
     Tps = np.arange(700.,2001.,100.)
     qis = np.arange(0.10,4.01,0.1)
     eta_ths = np.zeros((len(Tps),len(qis)))
@@ -373,7 +375,7 @@ def get_func_eta():
         (Tps,qis),
         eta_ths,
         bounds_error = False,
-        fill_value = None
+        fill_value = None   #type: ignore
         )
 
 
@@ -440,12 +442,12 @@ class HPR0D():
         Fc = self.factor_htc.gv("-")
         material = self.material
         
-        air= ct.Solution('air.yaml')
+        air= Air()
         Tp = 0.5*(Tin+Tout)
         eta_rcv = HTM_0D_blackbox(Tp, Qavg, Fc=Fc, air=air)[0]
         
-        rho_b = material.rho.gv("kg/m3")
-        cp = material.cp(148*Tp**0.3093)
+        rho_b = material.rho().gv("kg/m3")
+        cp = material.cp(Tp).gv("J/kg-K")
         t_res = rho_b * cp * tz * (Tout - Tin ) / (Qavg*1e6*eta_rcv)
         m_p = Prcv*1e6 / (cp*(Tout-Tin))
         P_bdr = Prcv / eta_rcv
@@ -732,7 +734,7 @@ def rcvr_HPR_0D(CST, Fc=2.57, air=air):
     return  [eta_rcv, P_SF, Tp, t_res, m_p, Arcv, vel_p]
 
 
-def rcvr_HPR_0D_simple(CST, SF, Fc=2.57, air=ct.Solution('air.yaml')):
+def rcvr_HPR_0D_simple(CST, SF: pd.DataFrame, Fc: float=2.57, air=Air()):
     
     Prcv, Qavg, Tin, Tout, tz  = [CST[x] for x in ['P_rcv','Qavg','T_pC','T_pH', 'tz']]
     
@@ -954,8 +956,11 @@ def rcvr_HPR_2D_simple(
 
 # TILTED PARTICLE RECEIVER (TPR)
 def eta_th_tilted(
-        Rcvr: dict[str],
-        Tp, qi, Fv=1.0) -> list[float]:
+        Rcvr: dict[str, Any],
+        Tp: float,
+        qi: float,
+        Fv: float = 1.0
+        ) -> list[float]:
     """
     Function that obtains an initial estimation for receiver thermal efficiency
 
@@ -973,7 +978,7 @@ def eta_th_tilted(
     F_t_rcv = Fv
     Tw: float  = Rcvr['Tw'] if 'Tw' in Rcvr else Tp
     Fc: float  = Rcvr['Fc'] if 'Fc' in Rcvr else 2.57
-    air = Rcvr['air'] if 'air' in Rcvr else ct.Solution('air.xml')
+    air = Rcvr['air'] if 'air' in Rcvr else Air()
     HTC: str = Rcvr['HTC'] if 'HTC' in Rcvr else 'NellisKlein'
     
     T_amb: float = Rcvr['T_amb'] if 'T_amb' in Rcvr else 300.
@@ -994,13 +999,10 @@ def eta_th_tilted(
     
     Tp = float(Tp)
     Tsky = T_amb - 15.
-    air.TP = (Tp+T_amb)/2., P_atm
-    if HTC=='NellisKlein':
-        hconv = Fc*htc.h_conv_NellisKlein(Tp, T_amb, 0.01, air)
-    elif HTC=='Holman':
-        hconv = Fc*htc.h_conv_Holman(Tp, T_amb, 0.01, air)
+    if HTC in ['NellisKlein', "Holman"]:
+        hconv = Fc*htc.h_horizontal_surface_upper_hot(Tp, T_amb, 0.01, fluid=air, correlation=HTC)
     elif HTC=='Experiment':
-        hconv = Fc*htc.h_conv_Experiment(Tp, T_amb, 0.1, air)
+        hconv = Fc*bdr_csp.htc.h_conv_Experiment(Tp, T_amb, 0.1, fluid=air)
     else:
         raise ValueError(f"HTC {HTC} not implemented")
     
@@ -1029,10 +1031,18 @@ def eta_th_tilted(
     if eta_th<0:
         eta_th = 0.
         
-    return eta_th, hrad, hconv, hwall
+    return [eta_th, hrad, hconv, hwall]
 
 
-def get_view_factor(CST,TOD,polygon_i,lims1,xp,yp,zp,beta):
+def get_view_factor(
+        CST: dict,
+        TOD: dict,
+        polygon_i: int,
+        lims1: list[float],
+        xp: float,
+        yp: float,
+        zp: float,
+        beta: float) -> list[Any]:
     Type, Array, x0, y0, V_TOD, N_TOD, H_TOD, rO, rA, Arcv = [TOD[x] for x in ['Type','Array','x0', 'y0','V','N','H','rO','rA','A_rcv']]
     
     xmin1,xmax1,ymin1,ymax1 = lims1
@@ -1078,7 +1088,7 @@ def get_view_factor(CST,TOD,polygon_i,lims1,xp,yp,zp,beta):
             F12ij=1.0
         F12[i,j] = F12ij
         
-    return X1,Y1,Z1,F12
+    return [X1,Y1,Z1,F12]
 
 
 def getting_T_w(T_w,*args):
@@ -1217,7 +1227,6 @@ def rcvr_TPR_0D(CST):
     hcond = 0.833
     Fc    = 2.57
     Fv    = 0.4
-    air = air=ct.Solution('air.yaml')
     T_w   = CST['T_pC']
     beta  = -27.
     tz    = 0.06
@@ -1645,7 +1654,7 @@ def get_plant_costs() -> dict[str, float | str]:
 
 #---------------------
 
-def get_land_area(SF, A_h1, N_sec=8):
+def get_land_area(SF: pd.DataFrame, A_h1: float, N_sec=8):
     SF_in = SF[SF["hel_in"]].copy()
     S_hel = len(SF_in) * A_h1
     x_c = SF_in["xi"].mean()
@@ -2069,13 +2078,13 @@ def run_coupled_simulation(
     
     if type_rcvr=='HPR_2D':
         receiver = HPR2D(
-            nom_power=CST["P_rcv"],
+            rcv_nom_power=CST["P_rcv"],
             heat_flux_avg= CST["Qavg"],
             temp_ini= CST["T_pC"],
             temp_out= CST["T_pH"],
             material= CST["TSM"],
             thickness_parts= CST["tz"],
-            factor_htc = 2.57
+            factor_htc = Var(2.57, "-")
         )
         rcvr_output = receiver.run_model(TOD,SF,R2)
     elif type_rcvr=='TPR_2D':
@@ -2094,13 +2103,13 @@ def run_coupled_simulation(
         }
     elif type_rcvr=='HPR_0D':
         receiver = HPR0D(
-            nom_power=CST["P_rcv"],
+            rcv_nom_power=CST["P_rcv"],
             heat_flux_avg= CST["Qavg"],
             temp_ini= CST["T_pC"],
             temp_out= CST["T_pH"],
             material= CST["TSM"],
             thickness_parts= CST["tz"],
-            factor_htc = 2.57
+            factor_htc = Var(2.57, "-")
         )
         rcvr_output = receiver.run_model(SF)
     elif type_rcvr=='TPR_0D':
@@ -2177,7 +2186,7 @@ def run_coupled_simulation(
     CST['rmax'] = HB.rmax
     CST['zmin'] = HB.zmin
     CST['zmax'] = HB.zmax
-    CST['S_HB']  = HB.area.v
+    CST['S_HB']  = HB.surface_area.v
     CST['S_TOD'] = TOD.surface_area.v
     CST['S_SF']  = N_hel*A_h1
     CST['S_tot'] = CST['S_HB'] + CST['S_TOD'] + CST['S_SF']

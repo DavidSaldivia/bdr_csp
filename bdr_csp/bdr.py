@@ -1968,7 +1968,9 @@ def CPC_Fk(ks,args):
         phi1, phi2 = np.radians((i+1)*phi), np.radians(i*phi)
         xi = (-ni/2) * ( 1/(mi-np.tan(phi1)) + 1/(mi-np.tan(phi2)) )
         yi = mi*xi+ni               #(xi,yi) are the point in the center of the line
-        rs = (xi**2+yi**2)**0.5     #rs should belong to CPC curve    
+        rs = (xi**2+yi**2)**0.5     #rs should belong to CPC curve
+    else:
+        raise ValueError(f"Array value {Array} is not valid.")
     
     a1 = ((rs+r_out)*np.cos(tht) + zs*np.sin(tht))**2
     a2 = 4*r_out*(1+np.sin(tht))
@@ -2026,6 +2028,8 @@ def CPC_Fxyz(x,y,z,args):
         xi = (-ni/2) * ( 1/(mi-np.tan(phi1)) + 1/(mi-np.tan(phi2)) )
         yi = mi*xi+ni               #(xi,yi) are the point in the center of the line
         r = (xi**2+yi**2)**0.5      #r should belong to CPC curve
+    else:
+        raise ValueError(f"{Array=} is not a valid value")
             
     a1 = ((r+r_out)*np.cos(tht) + z*np.sin(tht))**2
     a2 = 4*r_out*(1+np.sin(tht))

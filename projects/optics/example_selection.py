@@ -14,7 +14,7 @@ import matplotlib.patches as patches
 import os
 import bdr_csp.bdr as bdr
 
-from antupy.units import Variable
+from antupy import Var
 
 from bdr_csp.bdr import (
     HyperboloidMirror,
@@ -22,7 +22,7 @@ from bdr_csp.bdr import (
     TertiaryOpticalDevice,
 )
 
-DIR_DATA = r"C:\Users\david\OneDrive\academia-pega\2024_25-serc_postdoc\bdr_csp\data"
+DIR_DATA = "C:/Users/david/OneDrive/academia-pega/2024_25-serc_postdoc/data"
 DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -283,11 +283,11 @@ def get_radious_out(*args):
     def area_rqrd(rO,*args):
         A_rcv_rq, geometry, array, xrc, yrc, zrc, Cg = args
         A_rcv = TertiaryOpticalDevice(
-            geometry = geometry, array = array, Cg = Cg, radius_out=Variable(rO,"m"),
+            geometry = geometry, array = array, Cg = Cg, radius_out=Var(rO,"m"),
             xrc=xrc, yrc=yrc, zrc=zrc,
         ).receiver_area.get_value("m2")
         return A_rcv - A_rcv_rq
-    return Variable(
+    return Var(
         fsolve(area_rqrd, 1.0, args=args)[0], "m"
         )
 
@@ -362,19 +362,19 @@ from dataclasses import dataclass
 
 @dataclass
 class CSPPlant():
-    design_rad = Variable(950, "W/m2")           # Design-point DNI [W/m2]
+    design_rad = Var(950, "W/m2")           # Design-point DNI [W/m2]
     design_day = 80                              # Design-point day [-]
-    design_omega = Variable(0.0, "rad")          # Design-point hour angle [rad]
-    lat   = Variable(-23., "deg")                # Latitude [°]
-    lng   = Variable(115.9, "deg")               # Longitude [°]
-    temp_amb = Variable(300., "K")               # Ambient Temperature [K]
+    design_omega = Var(0.0, "rad")          # Design-point hour angle [rad]
+    lat   = Var(-23., "deg")                # Latitude [°]
+    lng   = Var(115.9, "deg")               # Longitude [°]
+    temp_amb = Var(300., "K")               # Ambient Temperature [K]
     type_shadow = "simple"
 
     # Receiver and Power Block
-    power_el = 10.0               #[MW] Target for Net Electrical Power
-    eta_pb   = 0.50               #[-] Power Block efficiency target 
-    eta_stg  = 0.95               #[-] Storage efficiency target
-    eta_rcv  = 0.75               #[-] Receiver efficiency target
+    power_el = Var(10.0, "MW")               # Target for Net Electrical Power
+    eta_pb   = Var(0.50, "-")               #[-] Power Block efficiency target
+    eta_stg  = Var(0.95, "-")               #[-] Storage efficiency target
+    eta_rcv  = Var(0.75, "-")               #[-] Receiver efficiency target
 
     @property
     def power_th(self) -> float:
@@ -394,8 +394,8 @@ def run_parametric(
 ):
 
     Npan  = 1
-    Ah1   = Variable(2.92**2, "m2")
-    lat   = Variable(-23., "deg")
+    Ah1   = Var(2.92**2, "m2")
+    lat   = Var(-23., "deg")
     type_shdw = 'point'
     
     fldr_dat  = os.path.join(DIR_DATA, 'mcrt_datasets_final')
@@ -443,14 +443,14 @@ def run_parametric(
         #Files for initial data set and HB intersections dataset
         file_SF = file_SF0.format(zf)
         
-        zf_v = Variable(zf, "m")
-        fzv_v = Variable(fzv, "-")
-        Cg_v =  Variable(Cg, "-")
+        zf_v = Var(zf, "m")
+        fzv_v = Var(fzv, "-")
+        Cg_v = Var(Cg, "-")
 
-        xrc = Variable(CST["xrc"], "m")
-        yrc = Variable(CST["yrc"], "m")
-        zrc = Variable(CST["zrc"], "m")
-        eta_hbi = Variable(CST["eta_hbi"], "-")
+        xrc = Var(CST["xrc"], "m")
+        yrc = Var(CST["yrc"], "m")
+        zrc = Var(CST["zrc"], "m")
+        eta_hbi = Var(CST["eta_hbi"], "-")
 
         A_rcv_rq = CST['P_SF'] / CST['Q_av']      #Area receiver
         rO = get_radious_out(A_rcv_rq, geometry, array, xrc, yrc, zrc, Cg_v)

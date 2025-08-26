@@ -16,10 +16,10 @@ from scipy.interpolate import interp2d
 from scipy.interpolate import RegularGridInterpolator, LinearNDInterpolator
 
 from antupy import Var, CF
+from antupy.props import Air, CO2, Carbo
+from antupy.htc import h_horizontal_surface_upper_hot
 
-import bdr_csp.bdr as bdr
-import bdr_csp.spr as spr
-import bdr_csp.htc as htc
+from bdr_csp import bdr, spr, htc
 from bdr_csp.dir import DIRECTORY
 
 ParticleReceiver = Union[spr.HPR0D, spr.HPR2D]
@@ -142,19 +142,22 @@ class PlantCSPBeamDownParticle():
         self.file_weather = os.path.join(
             DIR_DATA, 'weather', "Alice_Springs_Real2000_Created20130430.csv"
         )
-        self.HSF = bdr.SolarField(zf=self.zf, A_h1=self.Ah1, N_pan=self.Npan, file_SF=file_SF)
+        self.HSF = bdr.SolarField(
+            zf=self.zf, A_h1=self.Ah1, N_pan=self.Npan, file_SF=file_SF
+        )
         self.HB = bdr.HyperboloidMirror(
-            zf=self.zf, fzv=self.fzv, xrc=self.xrc, yrc=self.yrc, zrc=self.zrc, eta_hbi=self.eta_rfl
+            zf=self.zf, fzv=self.fzv, eta_hbi=self.eta_rfl,
+            xrc=self.xrc, yrc=self.yrc, zrc=self.zrc,
         )
         self.TOD = bdr.TertiaryOpticalDevice(
             geometry = self.geometry, array = self.array, Cg=self.Cg, receiver_area= self.rcv_area,
             xrc=self.xrc, yrc=self.yrc, zrc=self.zrc,
         )
 
-        self.receiver = self.select_receiver(self.rcv_type)
+        self.receiver = self._select_receiver(self.rcv_type)
     
 
-    def select_receiver(self, type_: str) -> ParticleReceiver:
+    def _select_receiver(self, type_: str) -> ParticleReceiver:
         """
         Factory method to select the receiver type.
         """
@@ -220,7 +223,7 @@ class PlantCSPBeamDownParticle():
             raise ValueError(f"Receiver type '{self.rcv_type}' not recognized or not implemented.")
 
         T_p = receiver.temps_parts
-        N_hel = receiver.n_hels.gv("-")
+        N_hel = int(receiver.n_hels.gv("-"))
         Qstg = receiver.heat_stored.gv("MWh")
         M_p = receiver.mass_stg.gv("kg/s")
         eta_rcv = receiver.eta_rcv.gv("-")
@@ -250,13 +253,10 @@ class PlantCSPBeamDownParticle():
         HB.calculate_mass(R2, SF, Gbn, A_h1)
         
         #Costing calculation
-        self.costs_out = spr.plant_costing_calculations(self, SF) # HB, TOD, costs_in, SF)
+        self.costs_out = spr.plant_costing_calculations(self, SF)
         
         # if save_detailed_results:
         #     pickle.dump([costs_out,R2,SF,TOD],open(file_base_case,'wb'))
-
-        print(HB.surface_area.gv("m2"))
-        print(self.HB.surface_area.gv("m2"))
 
         return R2, SF
 
@@ -283,7 +283,6 @@ class PlantCSPBeamDownParticle():
             bounds_error=False,
             fill_value=np.nan
         )
-
         # applying the interpolator to the dataframe
         Npoints = len(df)
         lats = latitude*np.ones(Npoints)
@@ -437,7 +436,7 @@ def eta_power_block(
 
 def eta_HPR_0D() -> RegularGridInterpolator:
     F_c  = 5.
-    air  = ct.Solution('air.yaml')
+    air  = Air()
     #Particles characteristics
     ab_p = 0.91    
     em_p = 0.75
@@ -458,9 +457,8 @@ def eta_HPR_0D() -> RegularGridInterpolator:
         qi    = qis[k]
         
         Tamb = T_amb #+ 273
-        air.TP = (Tp+Tamb)/2., ct.one_atm
         Tsky = Tamb-15
-        hcov = F_c * htc.h_conv_NellisKlein(Tp, Tamb, 5.0, air)
+        hcov = F_c * h_horizontal_surface_upper_hot(Tp, Tamb, 5.0, fluid=air)
         hrad = em_p*5.67e-8*(Tp**4-Tsky**4)/(Tp-Tamb)
         hrc  = hcov + hrad
         qloss = hrc * (Tp - Tamb)
@@ -576,23 +574,23 @@ def load_spotprice_data(
     )
     return df_sp_state
 
-class CO2():
-    _ct_solution = ct.Solution('gri30.yaml','gri30') # type: ignore
-    def cp(self, temp: float, pressure: float) -> float:
-        # Calculate specific heat capacity of CO2 at given temperature and pressure
-        self._ct_solution.TPY = temp, pressure, 'CO2:1.00'
-        return self._ct_solution.cp
+# class CO2():
+#     _ct_solution = ct.Solution('gri30.yaml','gri30') # type: ignore
+#     def cp(self, temp: float, pressure: float) -> float:
+#         # Calculate specific heat capacity of CO2 at given temperature and pressure
+#         self._ct_solution.TPY = temp, pressure, 'CO2:1.00'
+#         return self._ct_solution.cp
 
-    def rho(self, temp: float, pressure: float) -> float:
-        # Calculate specific heat capacity of CO2 at given temperature and pressure
-        self._ct_solution.TPY = temp, pressure, 'CO2:1.00'
-        return self._ct_solution.density_mass
+#     def rho(self, temp: float, pressure: float) -> float:
+#         # Calculate specific heat capacity of CO2 at given temperature and pressure
+#         self._ct_solution.TPY = temp, pressure, 'CO2:1.00'
+#         return self._ct_solution.density_mass
 
 
 @dataclass
 class PrimaryHeatExchanger:
     fluid = CO2()
-    parts = spr.Carbo()
+    parts = Carbo()
     
     pb_power_th: Var = Var(20., "MW")
     temp_sco2_in: Var = Var(550 + 273.15, "K")
@@ -602,7 +600,7 @@ class PrimaryHeatExchanger:
     U: Var = Var(240., "W/m2-K")               # Heat transfer coefficient
     press_sco2: Var = Var(25e6, "Pa")        # Pressure of the sCO2 in the HX
     n_pass: Var = Var(4, "-")              # Number of passes in the HX
-    n_tubes: Var = Var(400, "tubes/m2")           # Number of tubes per m2
+    n_tubes: Var = Var(400, "1/m2")           # Number of tubes per m2
     d_tubes: Var = Var(0.03, "m")         # Diameter of the tubes in the HX
 
 
@@ -625,29 +623,27 @@ class PrimaryHeatExchanger:
             for T_pi in T_ps
         ]
         return Var(
-            float(np.mean(f_HXTs) * 1000 * self.surface_area.gv("m2") / self.pb_power_th.gv("MW")), "MM USD/MW"
+            float(np.mean(f_HXTs) * 1000 * self.surface_area.gv("m2") / self.pb_power_th.gv("MW")),
+            "MUSD/MW"
         ) 
 
     def run_model(self) -> None:
     
         #### Tube and shell hx using log-mean temp difference
-        temp_sco2_in = self.temp_sco2_in.gv("K")
-        temp_sco2_out = self.temp_sco2_out.gv("K")
-        temp_parts_in = self.temp_parts_in.gv("K")
-        temp_parts_out = self.temp_parts_out.gv("K")
-        pb_power_th = self.pb_power_th.gv("MW")
-        U_HX = self.U.gv("W/m2-K")
-        press_sco2 = self.press_sco2.gv("Pa")
+        temp_sco2_in = self.temp_sco2_in
+        temp_sco2_out = self.temp_sco2_out
+        temp_parts_in = self.temp_parts_in
+        temp_parts_out = self.temp_parts_out
+        pb_power_th = self.pb_power_th
+        U_HX = self.U
+        press_sco2 = self.press_sco2
         Npass = int(self.n_pass.gv("-"))
-        n_tubes = int(self.n_tubes.gv("tubes/m2"))
+        n_tubes = int(self.n_tubes.gv("1/m2"))
         d_tubes = self.d_tubes.gv("m")
 
         dT_sco2  = temp_sco2_out - temp_sco2_in
         temp_sco2_avg = (temp_sco2_out+temp_sco2_in)/2
-
-
         cp_sco2  = self.fluid.cp(temp_sco2_avg, press_sco2)
-        
         sco2_mfr = pb_power_th / (cp_sco2 * dT_sco2) / Npass
         sco2_C = sco2_mfr * cp_sco2
         heat_exchanged = sco2_C * dT_sco2
@@ -658,9 +654,9 @@ class PrimaryHeatExchanger:
         parts_C = heat_exchanged / dtemp_parts
         parts_mfr = parts_C / parts_cp
         
-        lmtd = (
-            ((temp_parts_out-temp_sco2_in) - (temp_parts_in-temp_sco2_out))
-            /np.log((temp_parts_out-temp_sco2_in)/(temp_parts_in-temp_sco2_out))
+        lmtd = float(
+            ((temp_parts_out-temp_sco2_in) - (temp_parts_in-temp_sco2_out)).v
+            /np.log(((temp_parts_out-temp_sco2_in)/(temp_parts_in-temp_sco2_out)).v)
         )
         C_min = min(parts_C, sco2_C)
         C_max = max(parts_C, sco2_C)
@@ -672,13 +668,13 @@ class PrimaryHeatExchanger:
         
         volume   = surface_area/dAdV
         
-        self.heat_exchanged = Var(heat_exchanged, "MW")
-        self.epsilon = Var(epsilon, "-")
+        self.heat_exchanged = heat_exchanged.su("MW")
+        self.epsilon = epsilon.su("-")
         self.lmtd = Var(lmtd, "K")
-        self.surface_area = Var(surface_area, "m2")
-        self.volume = Var(volume, "m3")
-        self.parts_mfr = Var(parts_mfr, "kg/s")
-        self.sco2_mfr = Var(sco2_mfr, "kg/s")
+        self.surface_area = surface_area.su("m2")
+        self.volume = volume.su("m3")
+        self.parts_mfr = parts_mfr.su("kg/s")
+        self.sco2_mfr = sco2_mfr.su("kg/s")
         return None
 
  
@@ -938,10 +934,10 @@ def annual_performance(
         df_out["energy_gen_final"].sum()/years, "MWh/yr"
     )                                           # annual energy dispatched per power block
     revenue_tot = Var(
-        df_out["revenue_final"].sum()/1e6/years, "MM USD/yr"
+        df_out["revenue_final"].sum()/1e6/years, "MUSD/yr"
     )    # total annual revenue per power block
     revenue_daily = Var(
-        df_out["revenue_final"].sum()/1000/Ndays, "k USD/day"
+        df_out["revenue_final"].sum()/1000/Ndays, "kUSD/day"
     )   #daily revenue
     sf_cf = Var(
         df_out["rcv_heat"].sum() / (Ntower * rcv_power * dT * len(df_out)), "-"
@@ -1018,7 +1014,7 @@ def annual_performance(
             plant.costs_out["Elec"], cost_om, pb_power_el, pb_cf.v, discount_rate, n_years,
         )
     npv, roi, payback_period = calc_financial_metrics(
-        revenue_tot.gv("MM USD/yr"),
+        revenue_tot.gv("MUSD/yr"),
         cost_capital,
         discount_rate,
         n_years,
@@ -1034,11 +1030,11 @@ def annual_performance(
         'revenue_daily':revenue_daily,
         'lcoh': Var(lcoh, "USD/MWh"),
         'lcoe': Var(lcoe, "USD/MWh"),
-        'pb_cost': Var(pb_cost, "MM USD"),
-        'cost_capital': Var(cost_capital, "MM USD"),
+        'pb_cost': Var(pb_cost, "MUSD"),
+        'cost_capital': Var(cost_capital, "MUSD"),
         'roi': Var(roi, "-"),
         'payback_period': Var(payback_period, "yr"),
-        'npv': Var(npv, "MM USD"),
+        'npv': Var(npv, "MUSD"),
         'sf_time_operation':sf_time_operation,
         'pb_time_operation':pb_time_operation,
         'date_simulation':time.time(),
