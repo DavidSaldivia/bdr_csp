@@ -16,6 +16,9 @@ from os.path import isfile
 import pickle
 import time
 import sys
+
+from antupy import Var
+
 import bdr_csp.bdr as bdr
 import bdr_csp.spr as SPR
 
@@ -24,6 +27,7 @@ from bdr_csp.bdr import (
     HyperboloidMirror,
     TertiaryOpticalDevice,
 )
+from bdr_csp.pb import PlantCSPBeamDownParticle
 from bdr_csp.dir import DIRECTORY
 
 DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
@@ -84,6 +88,8 @@ def parametric_study(
     Cg = 2.0
     Ah1 = 2.92**2
     Npan = 1
+    temp_part_cold = 950
+    temp_part_hot = 1200
 
     # Qavgs = np.array([1.00,0.75,0.50,1.25,1.50])
     # Prcvs = np.append(np.arange(20,41,5),np.arange(15,4,-5))
@@ -98,78 +104,45 @@ def parametric_study(
         case = 'case_zf{:.0f}_Q_avg{:.2f}_Prcv{:.1f}'.format(zf, Qavg, Prcv)
         # print(case)
         file_base_case = 'cases/'+case+'.plk'
-        
-        if isfile(file_base_case):
-        # if False:
-            [CSTo,R2,SF,TOD] = pickle.load(open(file_base_case,'rb'))
-        
-        else:
             
-            CSTi = bdr.CST_BaseCase()
-            CSTi['costs_in'] = SPR.get_plant_costs()         #Plant related costs
-            CSTi['type_rcvr'] = 'HPR_0D'
-            file_SF = os.path.join(
-                DIR_DATA,
-                'mcrt_datasets_final',
-                'Dataset_zf_{:.0f}'.format(zf)
-            )
-            CSTi['file_weather'] = os.path.join(
-                DIR_DATA,
-                'weather',
-                "Alice_Springs_Real2000_Created20130430.csv"
-            )
+        Tp_avg = (temp_part_cold+temp_part_hot)/2
+        eta_rcv = SPR.HTM_0D_blackbox( Tp_avg, Qavg )[0]
+        Arcv = (Prcv/eta_rcv) / Qavg
+        plant = PlantCSPBeamDownParticle(
+            zf = Var(zf, "m"),
+            fzv = Var(fzv, '-'),
+            Ah1 = Var(Ah1, 'm2'),
+            xrc = Var(xrc, 'm'),
+            yrc = Var(yrc, 'm'),
+            zrc = Var(zrc, 'm'),
+            Cg = Var(Cg, '-'),
+            rcv_area = Var(Arcv, "m2"),
+            rcv_type="HPR_2D"
+        )
 
-            CSTi['zf'] = zf
-            CSTi['Qavg'] = Qavg
-            CSTi['P_rcv'] = Prcv
-            Tp_avg = (CSTi['T_pC']+CSTi['T_pH'])/2
-            CSTi['eta_rcv'] = SPR.HTM_0D_blackbox( Tp_avg, CSTi['Qavg'] )[0]
-            Arcv = (CSTi['P_rcv']/CSTi['eta_rcv']) / CSTi['Qavg']
-            CSTi['Arcv'] = Arcv
+        HSF = plant.HSF
+        HB = plant.HB
+        TOD = plant.TOD
 
-            HSF = SolarField(zf=zf, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
-            HB = HyperboloidMirror(
-               zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=CSTi["eta_rfl"]
-            )
-            TOD = TertiaryOpticalDevice(
-                geometry=geometry, array=array, Cg=Cg, receiver_area=Arcv,
-                xrc=xrc, yrc=yrc, zrc=zrc,
-            )
-            # CSTi['rO_TOD'] = TOD.radius_out
-            
-            # res = spo.minimize_scalar(
-            #     f_optim_fzv,
-            #     bracket = (75,84,97),
-            #     args = (CSTi, HSF, HB, TOD),
-            #     method = 'brent',
-            #     tol = tol
-            # )
-            # fzv  = res.x/100
-            
-            # CSTi['zf'] = zf
-            # CSTi['fzv'] = fzv
-            # CSTi['P_rcv'] = Prcv
-            CSTi['type_rcvr'] = 'HPR_2D'
-            R2, SF, CSTo = SPR.run_coupled_simulation(CSTi, HSF, HB, TOD)
-            print(CSTo)
-            
-            if save_detailed_results:
-                pickle.dump([CSTo,R2,SF,TOD],open(file_base_case,'wb'))
+        R2, SF, results_output = SPR.run_coupled_simulation(plant, HSF, HB, TOD)
+        print(results_output)
         
-        CSTo['tz'] = tz
+        if save_detailed_results:
+            pickle.dump([results_output,R2,SF,TOD],open(file_base_case,'wb'))
         
-        results = SPR.rcvr_HPR_2D_simple(CSTo, TOD, SF, R2, full_output=True)
-        temps_parts = results["temps_parts"]
-        n_hels = results["n_hels"]
-        rad_flux_max = results["rad_flux_max"]
-        rad_flux_avg = results["rad_flux_avg"]
-        heat_stored = results["heat_stored"]
-        eta_rcv = results["eta_rcv"]
-        mass_stg = results["mass_stg"]
-        time_res = results["time_res"]
-        vel_parts = results["vel_parts"]
-        it = results["iteration"]
-        solve_t_res = results["solve_t_res"]
+        results_output['tz'] = tz
+        
+        temps_parts = results_output["temp_parts"]
+        n_hels = results_output["n_hels"]
+        rad_flux_max = results_output["rad_flux_max"]
+        rad_flux_avg = results_output["rad_flux_avg"]
+        heat_stored = results_output["heat_stored"]
+        eta_rcv = results_output["eta_rcv"]
+        mass_stg = results_output["mass_stg"]
+        time_res = results_output["time_res"]
+        vel_parts = results_output["vel_parts"]
+        it = results_output["iteration"]
+        solve_t_res = results_output["solve_t_res"]
 
         eta_SF = SF.iloc[:n_hels].mean()['Eta_SF']
         eta_hel = SF.iloc[:n_hels].mean()['Eta_hel']
@@ -177,12 +150,6 @@ def parametric_study(
         eta_ThS = eta_SF * eta_rcv
 
         
-        cols = ['zf', 'Prcv', 'Qavg', 'tz',
-                'n_hels', 'Arcv', 'rad_flux_max', 'rad_flux_avg',
-                'heat_stored', 'time_res', 'vel_parts', 'eta_hel',
-                'eta_BDR', 'eta_SF', 'eta_rcv', 'eta_ThS',
-                'mass_stg', 'temp_parts_avg', 'it', 'solve_t_res',
-                'temp_parts_max', 'temp_parts_min', 'temp_parts_std']
         
         row = [zf, Prcv, Qavg, tz,
                n_hels, Arcv, rad_flux_max, rad_flux_avg,
@@ -193,9 +160,15 @@ def parametric_study(
         data.append(row)
         print('\t'.join('{:.2f}'.format(x) for x in row))
 
-        plotting_detailed_results(case, results, TOD)
+        plotting_detailed_results(case, results_output, TOD)
         # print(time.time()-stime)
 
+    cols = ['zf', 'Prcv', 'Qavg', 'tz',
+            'n_hels', 'Arcv', 'rad_flux_max', 'rad_flux_avg',
+            'heat_stored', 'time_res', 'vel_parts', 'eta_hel',
+            'eta_BDR', 'eta_SF', 'eta_rcv', 'eta_ThS',
+            'mass_stg', 'temp_parts_avg', 'it', 'solve_t_res',
+            'temp_parts_max', 'temp_parts_min', 'temp_parts_std']
     df_res = pd.DataFrame(data,columns=cols)
     print(df_res)
 
@@ -223,15 +196,17 @@ def plotting_detailed_results(
         if label == 'eta':
             vmin = 0.7
             vmax = 0.9
-            cmap = cm.YlOrRd
+            cmap = cm.get_cmap('YlOrRd')
         elif label =='Tp':
             vmin = (np.floor(Z.min()/100)*100)
             vmax = (np.ceil(Z.max()/100)*100)
-            cmap = cm.YlOrRd
+            cmap = cm.get_cmap("YlOrRd")
         elif label =='Q_in':
             vmin = 0.0
             vmax = np.ceil(Z.max())
-            cmap = cm.YlOrRd
+            cmap = cm.get_cmap("YlOrRd")
+        else:
+            raise ValueError(f"Label '{label}' not recognized. Use 'eta', 'Tp' or 'Q_in'.")
         
         surf = ax.pcolormesh(X, Y, Z, cmap=cmap, vmin=vmin, vmax=vmax)
         ax.set_xlabel('E-W axis (m)',fontsize=f_s)
@@ -240,7 +215,7 @@ def plotting_detailed_results(
         cb.ax.tick_params(labelsize=f_s-2)
         
         polygon_i=1
-        xO,yO = TOD.perimeter_points(TOD.radius_out, tod_index=polygon_i-1)
+        xO,yO = TOD.perimeter_points(TOD.radius_out.v, tod_index=polygon_i-1)
         lims = xO.min(), xO.max(), yO.min(), yO.max()
 
         # xA,yA = TOD.perimeter_points(TOD.radius_ap, tod_index=polygon_i-1)
@@ -275,6 +250,7 @@ def plotting_detailed_results(
         fig.savefig(
             os.path.join(fldr_rslt, f'{case}_{label}.png'), bbox_inches='tight'
         )
+        plt.show()
         plt.close()
     return None
 

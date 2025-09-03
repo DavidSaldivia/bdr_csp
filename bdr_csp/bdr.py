@@ -32,6 +32,100 @@ R2_COLS = ['hel','xi','yi','zi',
            'uxr','uyr','uzr', 
            'hel_in','hit_hb','hit_tod','hit_rcv','Nr_tod']
 
+
+@dataclass
+class CSPBDRPlant:
+    """Enhanced CSP Beam Down Receiver Plant configuration."""
+    
+    # Environment conditions
+    Gbn: Var = Var(950, "W/m2")
+    day: int = 80
+    omega: Var = Var(0.0, "rad")
+    lat: Var = Var(-23., "deg")
+    lng: Var = Var(115.9, "deg")
+    temp_amb: Var = Var(300., "K")
+    
+    # Power and efficiency targets
+    power_el: Var = Var(10.0, "MW")
+    eta_pb: Var = Var(0.50, "-")
+    eta_stg: Var = Var(0.95, "-")
+    eta_rcv: Var = Var(0.75, "-")
+    
+    # Solar field characteristics
+    eta_sfr: Var = Var(0.97*0.95*0.95, "-")
+    eta_rfl: Var = Var(0.95, "-")
+    A_h1: Var = Var(2.92**2, "m2")
+    N_pan: int = 1
+    err_x: Var = Var(0.001, "rad")
+    err_y: Var = Var(0.001, "rad")
+    type_shadow: str = "simple"
+    
+    # BDR and Tower characteristics
+    zf: Var = Var(50., "m")
+    fzv: Var = Var(0.83, "-")
+    eta_hbi: Var = Var(0.95, "-")
+    
+    # TOD characteristics
+    geometry: str = 'PB'
+    array: str = 'A'
+    xrc: Var = Var(0., "m")
+    yrc: Var = Var(0., "m")
+    fzc: Var = Var(0.20, "-")
+    
+    # Flux characteristics
+    Q_av: Var = Var(0.5, "MW/m2")
+    Q_mx: Var = Var(2.0, "MW/m2")
+    
+    def __post_init__(self):
+        """Calculate derived parameters."""
+        # Calculate zrc from fzc and zf
+        self.zrc = Var(self.fzc.gv("-") * self.zf.gv("m"), "m")
+        
+        # Calculate zv (vertex height)
+        self.zv = Var(self.fzv.gv("-") * self.zf.gv("m"), "m")
+        
+        # Calculate required solar field power
+        self.P_SF = Var(
+            self.power_el.gv("MW") / (self.eta_pb.gv("-") * self.eta_stg.gv("-") * self.eta_rcv.gv("-")),
+            "MW"
+        )
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for compatibility with legacy functions."""
+        return {
+            'Gbn': self.Gbn.gv("W/m2"),
+            'day': self.day,
+            'omega': self.omega.gv("rad"),
+            'lat': self.lat.gv("deg"),
+            'lng': self.lng.gv("deg"),
+            'T_amb': self.temp_amb.gv("K"),
+            'P_el': self.power_el.gv("MW"),
+            'eta_pb': self.eta_pb.gv("-"),
+            'eta_sg': self.eta_stg.gv("-"),
+            'eta_rcv': self.eta_rcv.gv("-"),
+            'eta_sfr': self.eta_sfr.gv("-"),
+            'eta_rfl': self.eta_rfl.gv("-"),
+            'A_h1': self.A_h1.gv("m2"),
+            'N_pan': self.N_pan,
+            'err_x': self.err_x.gv("rad"),
+            'err_y': self.err_y.gv("rad"),
+            'zf': self.zf.gv("m"),
+            'fzv': self.fzv.gv("-"),
+            'eta_hbi': self.eta_hbi.gv("-"),
+            'Type': self.geometry,
+            'Array': self.array,
+            'xrc': self.xrc.gv("m"),
+            'yrc': self.yrc.gv("m"),
+            'zrc': self.zrc.gv("m"),
+            'fzc': self.fzc.gv("-"),
+            'Q_av': self.Q_av.gv("MW/m2"),
+            'Q_mx': self.Q_mx.gv("MW/m2"),
+            'P_SF': self.P_SF.gv("MW"),
+            'zv': self.zv.gv("m"),
+            'type_shdw': self.type_shadow,
+        }
+
+
 @dataclass
 class SolarField():
     # Characteristics of Solar Field
@@ -1245,18 +1339,18 @@ def get_eta_attenuation(R1: pd.DataFrame) -> pd.Series:
 
 
 def heliostat_selection(
-        CST: dict,
+        CST: CSPBDRPlant,
         HSF: SolarField,
         HB: HyperboloidMirror,
         TOD: TertiaryOpticalDevice,
         verbose: bool = True
     ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, str]:
 
-    type_shdw = CST['type_shdw'] if 'type_shdw' in CST else 'None'
+    type_shdw = CST.type_shadow
     eta_hbi = HB.eta_hbi.gv("-")
-    A_h1 = CST["A_h1"].gv("m2")
-    lat = CST["lat"]
-    lng = CST["lng"]
+    A_h1 = CST.A_h1.gv("m2")
+    lat = CST.lat.gv("deg")
+    lng = CST.lng.gv("deg")
 
     # loading dataset
     R0, SF = HSF.load_dataset(save_plk=True)
@@ -1282,7 +1376,7 @@ def heliostat_selection(
     )
     N_avg   = R2[(R2['hit_rcv'])&(R2['hit_tod'])].groupby('hel').mean()['Nr_tod']
     SF['Eta_tdr'] = (
-        (CST["eta_rfl"]**N_avg) 
+        (CST.eta_rfl.v**N_avg) 
         * R2[(R2['hit_rcv'])&(R2['hit_tod'])].groupby('hel').count()['xb'] 
         / R2[R2['hit_tod']].groupby('hel').count()['xb']
     )
@@ -1316,16 +1410,16 @@ def heliostat_selection(
         #Getting the values for efficiencies and radiation fluxes
         SF['Eta_hbi'] = (R1.groupby('hel').sum()['hit_hb'] / R1.groupby('hel').count()['xb'])
         SF['Eta_att'] = get_eta_attenuation(R1)
-        SF['Eta_hel'] = SF['Eta_blk'] * SF['Eta_cos'] * SF['Eta_att'] * CST['eta_rfl']
+        SF['Eta_hel'] = SF['Eta_blk'] * SF['Eta_cos'] * SF['Eta_att'] * CST.eta_rfl.v
         SF['Eta_TOD'] = SF['Eta_tdi'] * SF['Eta_tdr']
         SF['Eta_BDR'] = SF['Eta_hbi'] * SF['Eta_hbr'] * SF['Eta_TOD']
         SF['Eta_SF']  = SF['Eta_hel'] * SF['Eta_BDR']
-        SF['Q_h1']    = (SF['f_sh'] * SF['Eta_SF'] * CST['Gbn'] * A_h1 * 1e-6)
+        SF['Q_h1']    = (SF['f_sh'] * SF['Eta_SF'] * CST.Gbn.v * A_h1 * 1e-6)
         SF.sort_values(by='Q_h1',ascending=False,inplace=True)
         Q_acc    = SF['Q_h1'].cumsum()
         
         #Getting the number of heliostats required and the list of heliostats
-        N_hel0  = len( Q_acc[ Q_acc < CST['P_SF'] ] ) + 1
+        N_hel0  = len( Q_acc[ Q_acc < CST.P_SF.v ] ) + 1
         N_hel   = int(np.ceil( suav*N_ant + (1-suav)* N_hel0 ))    #Attenuation factor
         if N_an2==N_hel:
             N_hel = int((N_hel+N_ant)/2)    #In case we are in a loop
@@ -1566,7 +1660,7 @@ def HB_mass_cooling(
         Gbn: float = 950,
         A_h1: float = 2.92**2,
         full_results: bool = False
-    ) -> tuple[tuple,tuple] | tuple:
+    ) -> tuple[float, float, float, float] | tuple:
 
     rmin = HB.rmin.gv("m")
     rmax = HB.rmax.gv("m")

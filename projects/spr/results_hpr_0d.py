@@ -25,7 +25,7 @@ def parametric_temps_fluxs(
     data = []
     for (temp,flux) in [(temp,flux) for temp in temps for flux in fluxes]:
         receiver = BlackboxModel()
-        output = receiver.run_0D_model(temp=temp, flux=flux, temp_amb=temp_amb)
+        output = receiver.run_0D_model(temp=float(temp), flux=flux, temp_amb=temp_amb)
         data.append([temp, flux, output["eta_rcv"], output["h_rad"], output["h_conv"]])
         if verbose:
             print(data[-1])
@@ -78,9 +78,8 @@ def parametric_radiative_fraction(verbose: bool = True) -> pd.DataFrame:
     temp_amb = 300.
     data = []
     for (temp,Fc) in [(temp,Fc) for temp in temps for Fc in Fcs]:
-        
         receiver = BlackboxModel(Fc=Fc)
-        output = receiver.run_0D_model(temp=temp, flux=flux, temp_amb=temp_amb)
+        output = receiver.run_0D_model(temp=float(temp), flux=flux, temp_amb=temp_amb)
         data.append([temp, Fc, output["eta_rcv"], output["h_rad"], output["h_conv"]])
         print(data[-1])
     return pd.DataFrame(data,columns=['temp','Fc','eta','h_rad','h_conv'])

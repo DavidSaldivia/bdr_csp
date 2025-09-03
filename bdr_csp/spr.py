@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Protocol, Any
 import pandas as pd
 import numpy as np
 import cantera as ct
+from cantera import Solution
 import scipy.optimize as spo
 import scipy.interpolate as spi
 
@@ -25,6 +26,8 @@ from antupy import htc
 from bdr_csp import bdr as BDR
 import bdr_csp.htc
 
+from bdr_csp.dir import DIRECTORY
+
 from bdr_csp.bdr import (
     SolarField,
     HyperboloidMirror,
@@ -34,9 +37,9 @@ from bdr_csp.bdr import (
 if TYPE_CHECKING:
     from bdr_csp.pb import PlantCSPBeamDownParticle
 
-# air = ct.Solution('air.yaml')
+DIR_DATA = DIRECTORY.DIR_DATA
+
 air = Air()
-# P_atm = ct.one_atm
 
 COLS_INPUT = [
     'location',
@@ -58,35 +61,6 @@ COLS_OUTPUT = [
     'stg_vel_flow',
     'date_simulation'
 ]
-
-
-# @dataclass
-# class SolidMaterial(Protocol):
-#     """Protocol for materials used in receivers."""
-#     rho: Var | Callable[[float],float] = Var(None, "kg/m3")
-#     cp: Var | Callable[[float],float] = Var(None, "J/kg-K")
-#     cond: Var | Callable[[float],float] = Var(None, "W/m-K")
-#     alpha: Var | Callable[[float],float] = Var(None, "m2/s")
-#     absortivity: Var | Callable[[float],float] = Var(None, "-")
-#     emi: Var | Callable[[float],float] = Var(None, "-")
-
-
-# def _cp_carbo(self, T: float) -> float:
-#     """Specific heat capacity for CARBO material. T in [K]"""
-#     return 148 * T**0.3093
-
-# def _alpha_carbo(self, T: float) -> float:
-#     """Thermal diffusivity for CARBO material. T in [K]"""
-#     return 0.7 / (1810 * self._cp_carbo(T))
-
-# @dataclass(frozen=True)
-# class Carbo():
-#     rho =  Var(1810, "kg/m3")
-#     cp = _cp_carbo
-#     cond = Var(0.7, "W/m-K")  # Thermal conductivity
-#     alpha = _alpha_carbo
-#     absortivity = Var(0.91, "-")  # Absorptivity
-#     emi = Var(0.85, "-")  # Emissivity
 
 
 def HTM_0D_blackbox(
@@ -197,20 +171,20 @@ def HTM_2D_moving_particles(
         Q_in = f_Qrc1(np.array([B_x,B_y]).transpose())/1000
         
         eta = np.array([f_eta([T_B[j],Q_in[j]])[0] for j in range(len(T_B))])
-        
+        eta = np.nan_to_num(eta, nan=0.0)
+
         Q_in = np.where(Q_in>0.01,Q_in,0.0)
         rcv_in = np.where(Q_in>0.01,True,False)
         
         Q_abs = Q_in * eta
         Q_gain = Q_abs * rcv_in
-        if material=='CARBO':
-            rho_b = 1810
-            if np.isnan(T_B).any():
-                print(T_B)
-                sys.exit()
-            cp_b  = 148*T_B**0.3093
-        else:
-            raise ValueError(f"Material {material} not implemented")
+        rho_b = material.rho().gv("kg/m3")
+
+        if np.isnan(T_B).any():
+            print(T_B)
+            sys.exit()
+        cp_b  = np.array([148*temp**0.3093 for temp in T_B])
+        
         T_B1 =  Q_abs*1e6 / (cp_b * rho_b * B_Lz / dt) + T_B
         dT  = T_B1-T_B
         
@@ -238,12 +212,8 @@ def HTM_2D_moving_particles(
             P_out[x] = np.array(P[x])
     
     temp_out_av = T_B.mean()
-    if material =='CARBO':
-        rho_b = 1810.
-        cp_b = (148*((T_B+temp_ini)/2)**0.3093).mean()
-    else:
-        raise ValueError(f"Material {material} not implemented")
-    
+    rho_b = material.rho().gv("kg/m3")
+    cp_b = np.array([(148*((temp+temp_ini)/2)**0.3093) for temp in T_B]).mean()
     M_stg1 = rho_b * (B_Lz*B_Ly*vel_p)
     Qstg1 = M_stg1 * cp_b * (temp_out_av - temp_ini) /1e6
     
@@ -432,7 +402,7 @@ class HPR0D():
         self.time_res: Var = Var(None, "s")
         self.vel_parts: Var = Var(None, "m/s")
 
-    def run_model(self, SF) -> None:
+    def run_model(self, SF) -> dict:
     
         Prcv = self.rcv_nom_power.gv("MW")
         Qavg = self.heat_flux_avg.gv("MW/m2")
@@ -468,6 +438,20 @@ class HPR0D():
         self.mass_stg = Var( m_p, "kg/s" )
         self.time_res = Var( t_res, "s" )
         self.vel_parts = Var( vel_p, "m/s" )
+
+        rcvr_output = {
+            # "temps_parts": temps_parts,
+            # "n_hels" : N_hel,
+            # "rad_flux_max": heat_flux_max,
+            # "rad_flux_avg": heat_flux_avg,
+            "power_sf_i": Var(np.nan, "MW"),
+            "heat_stored": self.heat_stored,
+            "eta_rcv": self.eta_rcv,
+            "mass_stg": self.mass_stg,
+            "time_res": self.time_res,
+            "vel_parts": self.vel_parts,
+        }
+        return rcvr_output
 
 
 @dataclass
@@ -517,7 +501,7 @@ class HPR2D():
             SF: pd.DataFrame,
             R2: pd.DataFrame,
             polygon_i: int = 1,
-            full_output: bool = False
+            full_output: bool = True
         ) -> dict:
         
         def func_temp_out_avg(t_res_g,*args):
@@ -570,11 +554,8 @@ class HPR2D():
         R2a = R2[(R2["hit_rcv"])&(R2["Npolygon"]==polygon_i)].copy()  #Rays into 1 receiver
         R2_all = R2[(R2["hit_rcv"])].copy()                           #Total Rays into receivers
         
-        if material == 'CARBO':
-            rho_b = 1810
-            cp = 148*temps_parts_avg**0.3093
-        else:
-            raise ValueError(f"Material {material} not implemented")
+        rho_b = material.rho().gv("kg/m3")
+        cp = material.cp(temps_parts_avg).gv("J/kg-K")
         
         it_max = 20
         it = 1
@@ -693,25 +674,483 @@ class HPR2D():
         self.vel_p: Var = Var(vel_p, "m/s")
 
         rcvr_output = {
-            # "temps_parts": temps_parts,
-            # "n_hels" : N_hel,
-            # "rad_flux_max": heat_flux_max,
-            # "rad_flux_avg": heat_flux_avg,
+            "temps_parts": temps_parts,
+            "n_hels" : self.n_hels,
+            "rad_flux_max": self.rad_flux_max,
+            "rad_flux_avg": self.heat_flux_avg,
             "power_sf_i": P_SF_i,
             "heat_stored": heat_stored,
-            "power_sf_total": P_SF_it,
+            "rcv_power_in": P_SF_it,
             "eta_rcv": eta_rcv,
             "mass_stg": mass_stg,
             "time_res": t_res,
             "vel_parts": vel_p,
             "iteration": it,
-            "solve_t_res": solve_t_res
+            "solve_t_res": solve_t_res,
+            "full": Rcvr_full
         }
-        if full_output:
-            rcvr_output["full"] = Rcvr_full
-        
         return rcvr_output
 
+@dataclass
+class TPR2D():
+    """Tilted Particle Receiver 2D model implementation."""
+    
+    rcv_nom_power: Var = Var(10., "MW")      # Initial target for Receiver nominal power
+    heat_flux_max: Var = Var(3.0, "MW/m2")  # Maximum radiation flux on receiver
+    heat_flux_avg: Var = Var(0.5, "MW/m2")  # Average radiation flux on receiver (initial guess)
+    temp_ini: Var = Var(950, "K")           # Particle temperature in cold tank
+    temp_out: Var = Var(1200, "K")          # Particle temperature in hot tank
+    temp_amb: Var = Var(300., "K")          # Ambient temperature
+    material: Carbo = Carbo()                # Thermal Storage Material
+    thickness_parts: Var = Var(0.06, "m")   # Thickness of material on conveyor belt
+    factor_htc: Var = Var(2.57, "-")        # Factor to magnify the HTC
+    
+    # TPR specific parameters
+    wall_temp: Var = Var(800., "K")         # Wall temperature
+    tilt_angle: Var = Var(-27., "deg")      # Tilt angle (negative for tilted down)
+    absorptivity: Var = Var(0.91, "-")     # Particle absorptivity
+    emissivity_part: Var = Var(0.85, "-")  # Particle emissivity
+    emissivity_wall: Var = Var(0.20, "-")  # Wall emissivity
+    conductivity: Var = Var(0.833, "W/m2-K") # Conduction coefficient
+    view_factor_avg: Var = Var(0.4, "-")   # Average view factor
+    
+    # Receiver dimensions (calculated from TOD)
+    x_ini: float | None = None
+    x_fin: float | None = None
+    y_bot: float | None = None
+    y_top: float | None = None
+    
+    def __post_init__(self):
+        # Output variables
+        self.rcv_power_in: Var = Var(None, "MW")
+        self.temps_parts = np.array([])
+        self.n_hels: Var = Var(None, "-")
+        self.rad_flux_max: Var = Var(None, "MW/m2")
+        self.rad_flux_avg: Var = Var(None, "MW/m2")
+        self.heat_stored: Var = Var(None, "MWh")
+        self.eta_rcv: Var = Var(None, "-")
+        self.mass_stg: Var = Var(None, "kg/s")
+        self.time_res: Var = Var(None, "s")
+        self.vel_parts: Var = Var(None, "m/s")
+        
+        # Internal parameters
+        self._air = Air()
+        
+    def get_dimensions(self, TOD: TertiaryOpticalDevice, tod_index: int = 0) -> None:
+        """Get receiver dimensions from TOD geometry."""
+        xO, yO = TOD.perimeter_points(TOD.radius_out.v, tod_index=tod_index)
+        self.x_fin = xO.min()
+        self.x_ini = xO.max()
+        self.y_bot = yO.min()
+        self.y_top = yO.max()
+        self.area = TOD.receiver_area
+        return None
+    
+    def _get_receiver_conditions(self, TOD: TertiaryOpticalDevice) -> dict:
+        """Setup receiver conditions dictionary for thermal calculations."""
+        beta = self.tilt_angle.gv("rad")
+        receiver_area = TOD.receiver_area.gv("m2")
+        A_rc1 = receiver_area / TOD.n_tods
+        
+        return {
+            'A_rc1': A_rc1,
+            'em_p': self.emissivity_part.gv("-"),
+            'em_w': self.emissivity_wall.gv("-"),
+            'ab_p': self.absorptivity.gv("-"),
+            'hcond': self.conductivity.gv("W/m2-K"),
+            'Fc': self.factor_htc.gv("-"),
+            'Fv_avg': self.view_factor_avg.gv("-"),
+            'Tw': self.wall_temp.gv("K"),
+            'air': self._air,
+            'beta': beta,
+            'x_ini': self.x_ini,
+            'x_fin': self.x_fin,
+            'y_bot': self.y_bot,
+            'y_top': self.y_top,
+            'tz': self.thickness_parts.gv("m"),
+            'T_amb': self.temp_amb.gv("K")
+        }
+    
+    def _func_temp_out_avg(self, t_res_g, *args):
+        """Objective function for residence time calculation."""
+        Rcvr, f_Qrc1, f_eta, f_ViewFactor = args
+        Rcvr_copy = Rcvr.copy()
+        Rcvr_copy['vel_p'] = Rcvr_copy['xavg'] / t_res_g[0]
+        Rcvr_copy['t_sim'] = (Rcvr_copy['x_ini'] - Rcvr_copy['x_fin']) / Rcvr_copy['vel_p']
+        
+        T_p, _, _ = HTM_2D_tilted_surface(Rcvr_copy, f_Qrc1, f_eta, f_ViewFactor)
+        return T_p.mean() - Rcvr_copy['T_out']
+    
+    def _get_view_factor_function(self, TOD: TertiaryOpticalDevice, polygon_i: int, lims: list, xp: float, yp: float, zp: float) -> Callable:
+        """Create view factor interpolation function."""
+        beta = self.tilt_angle.gv("rad")
+        X1, Y1, Z1, F12 = get_view_factor( TOD, polygon_i, lims, xp, yp, zp, beta)
+        X2 = X1[0, :]
+        Y2 = Y1[:, 0]
+        return spi.interp2d(X2, Y2, F12)
+    
+    def _process_tilted_rays(self, R2: pd.DataFrame, polygon_i: int) -> tuple[pd.DataFrame, float, float, float]:
+        """Process rays for tilted surface intersection."""
+        R3 = R2[(R2["Npolygon"] == polygon_i) & R2["hit_rcv"]].copy()
+        
+        # Point of pivoting belonging to the plane
+        xp = R3["xr"].max() + 0.1
+        yp = 0.0  # Valid for 1st hexagon
+        zp = R3["zr"].mean()
+        
+        # Calculate intersection with tilted plane
+        beta = self.tilt_angle.gv("rad")
+        kt = (xp - R3["xr"]) / (R3["uzr"] / np.tan(beta) + R3["uxr"])
+        R3['xt'] = R3["xr"] + kt * R3["uxr"]
+        R3['yt'] = R3["yr"] + kt * R3["uyr"]
+        R3['zt'] = R3["zr"] + kt * R3["uzr"]
+        
+        return R3, xp, yp, zp
+    
+    def _calculate_heat_flux_function(
+            self,
+            R3: pd.DataFrame,
+            R2: pd.DataFrame,
+            SF: pd.DataFrame,
+            N_hel: int,
+            TOD: TertiaryOpticalDevice,
+            polygon_i: int,
+            Gbn: float,
+            A_h1: float
+        ) -> tuple[Callable, float, list]:
+        """Calculate heat flux distribution and create interpolation function."""
+        hlst = SF.iloc[:N_hel].index
+        SF_it = SF.loc[hlst]
+        Etas_it = SF_it.mean()
+        P_SF_it = SF_it["Q_pen"].sum()
+        eta_SF_it = Etas_it['Eta_SF']
+        
+        # Get rays for this iteration
+        R3i = R3[R3["hel"].isin(hlst)].copy()
+        R2_all = R2[R2["hit_rcv"]].copy()
+        r_i = len(R3i) / len(R2_all[R2_all["hel"].isin(hlst)])
+        
+        # Setup grid for heat flux calculation
+        Nx, Ny = 100, 50
+        xO, yO = TOD.perimeter_points(TOD.radius_out.v, tod_index=polygon_i-1)
+        xA, yA = TOD.perimeter_points(TOD.radius_ap.v, tod_index=polygon_i-1)
+        
+        xmin = max(xA.min(), R3i["xt"].quantile(0.01))
+        xmax = min(xA.max(), R3i["xt"].quantile(0.99))
+        ymin = max(yA.min(), R3i["yt"].quantile(0.01))
+        ymax = min(yA.max(), R3i["yt"].quantile(0.99))
+        
+        dx = (xmax - xmin) / Nx
+        dy = (ymax - ymin) / Ny
+        dA = dx * dy
+        
+        # Calculate number of rays hitting receiver
+        Nrays = len(R3i.xt[(R3i.xt > xmin) & (R3i.xt < xmax) & 
+                          (R3i.yt > ymin) & (R3i.yt < ymax)])
+        
+        # Total power calculation
+        P_SF = eta_SF_it * (Gbn * A_h1 * N_hel)
+        P_SF1 = P_SF * r_i
+        Fbin = P_SF1 / (1e3 * dA * Nrays)
+        
+        # Create heat flux distribution
+        Q_rc1, X_rc1, Y_rc1 = np.histogram2d(
+            R3i["xt"], R3i["yt"],
+            bins=[Nx, Ny],
+            range=[[xmin, xmax], [ymin, ymax]],
+            density=False
+        )
+        Q_rc1 = Fbin * Q_rc1
+        Q_max = Q_rc1.max() / 1000.0
+        
+        # Reduce receiver size based on minimum heat flux
+        Q_avg_min = 250  # [kW/m2] Minimal average radiation allowed per axis
+        
+        # Filter in y-direction
+        valid_y = Q_rc1.mean(axis=0) > Q_avg_min
+        if np.any(valid_y):
+            ymin_corr = Y_rc1[:-1][valid_y][0]
+            ymax_corr = Y_rc1[:-1][valid_y][-1]
+        else:
+            ymin_corr, ymax_corr = ymin, ymax
+        
+        # Filter in x-direction
+        valid_x = Q_rc1.mean(axis=1) > Q_avg_min
+        if np.any(valid_x):
+            xmin_corr = X_rc1[:-1][valid_x][0]
+            xmax_corr = X_rc1[:-1][valid_x][-1]
+        else:
+            xmin_corr, xmax_corr = xmin, xmax
+        
+        # Create corrected arrays
+        X_av = np.array([(X_rc1[i] + X_rc1[i+1]) / 2 for i in range(len(X_rc1)-1)])
+        Y_av = np.array([(Y_rc1[i] + Y_rc1[i+1]) / 2 for i in range(len(Y_rc1)-1)])
+        
+        x_mask = (X_av > xmin_corr) & (X_av < xmax_corr)
+        y_mask = (Y_av > ymin_corr) & (Y_av < ymax_corr)
+        
+        Q_rcf = Q_rc1[np.ix_(x_mask, y_mask)]
+        X_rcf = X_av[x_mask]
+        Y_rcf = Y_av[y_mask]
+        
+        # Apply reflectivity correction
+        em_w = self.emissivity_wall.gv("-")
+        eta_tilt = Q_rcf.sum() * dA / (P_SF1 / 1000)
+        eta_tilt_rfl = eta_tilt + (1 - eta_tilt) * (1 - em_w)
+        F_corr = eta_tilt_rfl / eta_tilt if eta_tilt > 0 else 1.0
+        Q_rcf = F_corr * Q_rcf
+        
+        # Create interpolation function
+        f_Qrc1 = spi.RectBivariateSpline(X_rcf, Y_rcf, Q_rcf)
+        
+        lims = [xmin_corr, xmax_corr, ymin_corr, ymax_corr]
+        return f_Qrc1, Q_max, lims
+    
+    def run_model(
+        self,
+        TOD: TertiaryOpticalDevice,
+        SF: pd.DataFrame,
+        R2: pd.DataFrame,
+        Gbn: float = 950.,
+        A_h1: float = 2.92**2,
+        polygon_i: int = 1,
+        full_output: bool = True
+    ) -> dict:
+        """
+        Run the complete TPR 2D model simulation.
+        
+        Args:
+            TOD: Tertiary Optical Device
+            SF: Solar field DataFrame
+            R2: Ray tracing results DataFrame
+            CST: Configuration dictionary
+            polygon_i: Polygon index for receiver
+            full_output: Whether to return detailed results
+            
+        Returns:
+            Dictionary with simulation results
+        """
+        temp_ini = self.temp_ini.gv("K")
+        temp_out = self.temp_out.gv("K")
+        thickness_parts = self.thickness_parts.gv("m")
+        power_rcv = self.rcv_nom_power.gv("MW")
+        heat_flux_avg = self.heat_flux_avg.gv("MW/m2")
+        
+        # Get receiver dimensions
+        if self.x_ini is None:
+            self.get_dimensions(TOD, polygon_i-1)
+        
+        # Setup receiver conditions
+        Rcvr = self._get_receiver_conditions(TOD)
+        Rcvr.update({
+            'T_ini': temp_ini,
+            'T_out': temp_out,
+            'TSM': 'CARBO'  # Material type
+        })
+        
+        # Process tilted rays
+        R3, xp, yp, zp = self._process_tilted_rays(R2, polygon_i)
+        R2_all = R2[R2["hit_rcv"]].copy()
+        
+        # Initial guess for number of heliostats
+        T_av = (temp_ini + temp_out) / 2
+        eta_rcv = HTM_0D_blackbox(T_av, heat_flux_avg, Fc=self.factor_htc.gv("-"), air=self._air)[0]
+        Q_acc = SF['Q_h1'].cumsum()
+        N_hel = len(Q_acc[Q_acc < (power_rcv / eta_rcv)]) + 1
+        
+        # Material properties
+        rho_b = self.material.rho().gv("kg/m3")
+
+        # Iteration parameters
+        it_max = 20
+        it = 1
+        loop = 0
+        data = []
+        N_hels = []
+        solve_t_res = False
+        Loop_break = False
+        T_w = np.nan
+        cp = np.nan
+        Q_av = np.nan
+        
+        # Main iteration loop
+        while True:
+            # Calculate heat flux function
+            f_Qrc1, Q_max, lims = self._calculate_heat_flux_function(
+                R3, R2, SF, N_hel, TOD, polygon_i, Gbn, A_h1
+            )
+            
+            # Update receiver dimensions from corrected limits
+            x_fin, x_ini, y_bot, y_top = lims
+            A_rc1 = TOD.receiver_area.gv("m2") / TOD.n_tods
+            xavg = A_rc1 / (y_top - y_bot)
+            
+            # Get view factor function
+            f_ViewFactor = self._get_view_factor_function(TOD, polygon_i, lims, xp, yp, zp)
+            Fv = self.view_factor_avg.gv("-")  # Use average for now
+            
+            # Calculate wall temperature (simplified)
+            if it == 1:
+                T_pavg = (temp_ini + temp_out) / 2
+                beta = self.tilt_angle.gv("rad")
+                args = (T_pavg, x_ini, x_fin, y_top, y_bot, beta, Fv,
+                       self.emissivity_part.gv("-"), self.emissivity_wall.gv("-"),
+                       A_rc1, self.conductivity.gv("W/m2-K"))
+                try:
+                    T_w = spo.fsolve(getting_T_w, self.wall_temp.gv("K"), args=args)[0]
+                    self.wall_temp = Var(T_w, "K")
+                except:
+                    T_w = self.wall_temp.gv("K")
+            
+            # Update receiver conditions
+            Rcvr.update({
+                'x_ini': x_ini,
+                'x_fin': x_fin,
+                'y_bot': y_bot,
+                'y_top': y_top,
+                'Tw': T_w,
+                'xavg': xavg
+            })
+            
+            # Calculate residence time
+            hlst = SF.iloc[:N_hel].index
+            SF_it = SF.loc[hlst]
+            P_SF_it = SF_it["Q_pen"].sum()
+            receiver_area = TOD.receiver_area.gv("m2")
+            
+            if it == 1:
+                Q_av = P_SF_it / receiver_area
+                cp = self.material.cp(T_av).gv("J/kg-K")
+                eta_rcv_g = eta_th_tilted(Rcvr, T_av, heat_flux_avg, Fv=Fv)[0]
+            else:
+                eta_rcv_g = eta_rcv
+            
+            if solve_t_res:
+                t_res_g = rho_b * cp * thickness_parts * (temp_out - temp_ini) / (eta_rcv_g * Q_av * 1e6)
+                args = (Rcvr, f_Qrc1, eta_th_tilted, f_ViewFactor)
+                try:
+                    sol = spo.fsolve(self._func_temp_out_avg, t_res_g, args=args, xtol=1e-2, full_output=True)
+                    t_res = sol[0][0]
+                except:
+                    t_res = t_res_g
+            else:
+                t_res_g = rho_b * cp * thickness_parts * (temp_out - temp_ini) / (eta_rcv_g * Q_av * 1e6)
+                t_res = t_res_g
+            
+            # Final simulation
+            vel_p = xavg / t_res
+            t_sim = (x_ini - x_fin) / vel_p
+            
+            Rcvr.update({
+                'vel_p': vel_p,
+                't_sim': t_sim
+            })
+            
+            if full_output:
+                T_p, Qstg1, Mstg1, Rcvr_full = HTM_2D_tilted_surface(
+                    Rcvr, f_Qrc1, eta_th_tilted, f_ViewFactor, full_output=True
+                )
+            else:
+                T_p, Qstg1, Mstg1 = HTM_2D_tilted_surface(
+                    Rcvr, f_Qrc1, eta_th_tilted, f_ViewFactor, full_output=False
+                )
+                Rcvr_full = None
+            
+            # Calculate performance parameters
+            rays = R3[R3["hel"].isin(hlst)].copy()
+            r_i = len(rays) / len(R2_all[R2_all["hel"].isin(hlst)]) if len(R2_all[R2_all["hel"].isin(hlst)]) > 0 else 1.0
+            P_SF_i = r_i * P_SF_it * 1e6
+            
+            eta_rcv = Qstg1 * 1e6 / P_SF_i if P_SF_i > 0 else 0
+            Qstg = Qstg1 / r_i
+            Mstg = Mstg1 / r_i
+            Q_av = P_SF_it / receiver_area
+            
+            # Check convergence
+            P_SF = power_rcv / eta_rcv if eta_rcv > 0 else np.inf
+            Q_acc = SF['Q_h1'].cumsum()
+            N_new = len(Q_acc[Q_acc < P_SF]) + 1
+            
+            conv = abs(Qstg - power_rcv) < 0.1 and abs(T_p.mean() - temp_out) < 1.0
+            
+            if (N_new == N_hel) and conv:
+                break
+            
+            if Loop_break:
+                break
+            
+            if loop == 5:
+                N_new = (N_hel + N_new) // 2
+                Loop_break = True
+            
+            if N_new in N_hels:
+                solve_t_res = True
+                N_new = (N_hel + N_new) // 2
+                if N_new in N_hels:
+                    N_new += 1
+                loop += 1
+            
+            if (it == it_max) and conv and not solve_t_res:
+                it_max = 40
+                solve_t_res = True
+            
+            if it == it_max and solve_t_res:
+                break
+            
+            N_hel = N_new
+            N_hels.append(N_new)
+            it += 1
+        
+        # Store results
+        self.rcv_power_in = Var(P_SF_it, "MW")
+        self.temps_parts = T_p
+        self.n_hels = Var(N_hel, "-")
+        self.rad_flux_max = Var(Q_max, "MW/m2")
+        self.rad_flux_avg = Var(Q_av, "MW/m2")
+        self.heat_stored = Var(Qstg, "MWh")
+        self.eta_rcv = Var(eta_rcv, "-")
+        self.mass_stg = Var(Mstg, "kg/s")
+        self.time_res = Var(t_res, "s")
+        self.vel_parts = Var(vel_p, "m/s")
+        
+        # Return results
+        rcvr_output = {
+            "temps_parts": T_p,
+            "n_hels": self.n_hels,
+            "rad_flux_max": self.rad_flux_max,
+            "rad_flux_avg": self.rad_flux_avg,
+            "power_sf_i": P_SF_i,
+            "heat_stored": Qstg,
+            "rcv_power_in": P_SF_it,
+            "eta_rcv": eta_rcv,
+            "mass_stg": Mstg,
+            "time_res": t_res,
+            "vel_parts": vel_p,
+            "iteration": it,
+            "solve_t_res": solve_t_res,
+            "full": Rcvr_full
+        }
+        
+        return rcvr_output
+    
+    def to_dict(self) -> dict:
+        """Convert TPR2D to dictionary format for legacy compatibility."""
+        return {
+            'P_rcv': self.rcv_nom_power.gv("MW"),
+            'Qavg': self.heat_flux_avg.gv("MW/m2"),
+            'T_pC': self.temp_ini.gv("K"),
+            'T_pH': self.temp_out.gv("K"),
+            'tz': self.thickness_parts.gv("m"),
+            'TSM': 'CARBO',
+            'Fc': self.factor_htc.gv("-"),
+            'Tw': self.wall_temp.gv("K"),
+            'beta': self.tilt_angle.gv("deg"),
+            'ab_p': self.absorptivity.gv("-"),
+            'em_p': self.emissivity_part.gv("-"),
+            'em_w': self.emissivity_wall.gv("-"),
+            'hcond': self.conductivity.gv("W/m2-K"),
+            'Fv_avg': self.view_factor_avg.gv("-")
+        }
 
 def rcvr_HPR_0D(CST, Fc=2.57, air=air):
     
@@ -1035,21 +1474,29 @@ def eta_th_tilted(
 
 
 def get_view_factor(
-        CST: dict,
-        TOD: dict,
+        TOD: TertiaryOpticalDevice,
         polygon_i: int,
         lims1: list[float],
         xp: float,
         yp: float,
         zp: float,
         beta: float) -> list[Any]:
-    Type, Array, x0, y0, V_TOD, N_TOD, H_TOD, rO, rA, Arcv = [TOD[x] for x in ['Type','Array','x0', 'y0','V','N','H','rO','rA','A_rcv']]
     
+    Array = TOD.array
+    x0 = TOD.x0
+    y0 = TOD.y0
+    V_TOD = TOD.n_sides
+    N_TOD = TOD.n_tods
+    H_TOD = TOD.height.gv("m")
+    rO = TOD.radius_out.gv("m")
+    rA = TOD.radius_ap.gv("m")
+    Arcv = TOD.receiver_area.gv("m2")
+    zrc = TOD.zrc.gv("m")
+
     xmin1,xmax1,ymin1,ymax1 = lims1
     n1,n2 = (-np.sin(beta),0.,np.cos(beta)), (0.,0.,-1)
-    zrc = CST['zrc']
     x0i,y0i = x0[polygon_i-1], y0[polygon_i-1]
-    xO,yO = BDR.TOD_XY_R(rO,H_TOD,V_TOD,N_TOD,x0i,y0i,zrc)
+    xO, yO = TOD.perimeter_points(rO, polygon_i-1)
     xmin2,xmax2,ymin2,ymax2 =xO.min(),xO.max(),yO.min(),yO.max()
     
     Nx2 = 100
@@ -1060,7 +1507,7 @@ def get_view_factor(
     Px = np.array([xmin2+dx2/2 + i*dx2 for i in range(Nx2)])
     Py = np.array([ymin2+dy2/2 + j*dy2 for j in range(Ny2)])
     X2, Y2 = np.meshgrid(Px, Py)
-    Z2    = (zrc-TOD['H']) * np.ones(X2.shape)
+    Z2    = (zrc-H_TOD) * np.ones(X2.shape)
     rcvr_in = BDR.CPC_enter(X2, Y2, rO, Array, V_TOD, x0i, y0i)
     
     Nx1=50
@@ -1277,7 +1724,7 @@ def rcvr_TPR_0D_corr(
     hcond = 0.833
     Fc    = 2.57
     Fv    = 0.4
-    air = ct.Solution('air.yaml')
+    air = Solution("air.yaml")
     T_w   = plant.stg_temp_cold.gv("K")
     T_amb = plant.temp_amb.gv("K")
     beta  = -27.
@@ -1366,7 +1813,7 @@ def TPR_2D_model(
     em_w  = 0.20
     hcond = 0.833
     Fc = 2.57
-    air = air=ct.Solution('air.yaml')
+    air = Solution("air.yaml")
     T_w  = 800.                        #initial guess for Tw
     beta = -27. * np.pi/180.
     
@@ -1387,7 +1834,7 @@ def TPR_2D_model(
     
     # STARTING THE LOOP HERE
     # Initial guess for number of heliostats
-    air=ct.Solution('air.yaml')
+    air=Solution("air.yaml")
     T_av = (T_ini+T_out)/2
     eta_rcv = HTM_0D_blackbox( T_av, Qavg, Fc=2.57, air=air)[0]
     Q_acc = SF['Q_h1'].cumsum()
@@ -2046,11 +2493,10 @@ def initial_eta_rcv(CSTi):
 
 
 def run_coupled_simulation(
-        CST: dict,
+        plant: PlantCSPBeamDownParticle,
         HSF: SolarField,
         HB: HyperboloidMirror,
         TOD: TertiaryOpticalDevice,
-    **kwargs
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
 
     #Getting the RayDataset
@@ -2062,140 +2508,96 @@ def run_coupled_simulation(
     HB.rmin = Var( R1['rb'].quantile(0.0001), "m")
     HB.rmax = Var( R1['rb'].quantile(0.9981), "m")
     R1['hit_hb'] = (R1['rb']>HB.rmin.v) & (R1['rb']<HB.rmax.v)
-    CST['rmin'] = HB.rmin
-    CST['rmax'] = HB.rmax
+    # CST['rmin'] = HB.rmin
+    # CST['rmax'] = HB.rmax
     
-    SF = HB.shadow_simple( lat=CST['lat'], lng=CST["lng"], type_shdw="simple", SF=SF)
+    SF = HB.shadow_simple( lat=plant.lat.v, lng=plant.lng.v, type_shdw="simple", SF=SF)
     
     #Interceptions with TOD
     R2 = TOD.mcrt_solver(R1, refl_error=False)
     
     ### Optical Efficiencies
-    SF = BDR.optical_efficiencies(CST,R2,SF)
+    SF = BDR.optical_efficiencies(plant,R2,SF)
     
     ### Running receiver simulation and getting the results
-    type_rcvr = CST['type_rcvr'] if 'type_rcvr' in CST else 'None'
-    
-    if type_rcvr=='HPR_2D':
-        receiver = HPR2D(
-            rcv_nom_power=CST["P_rcv"],
-            heat_flux_avg= CST["Qavg"],
-            temp_ini= CST["T_pC"],
-            temp_out= CST["T_pH"],
-            material= CST["TSM"],
-            thickness_parts= CST["tz"],
-            factor_htc = Var(2.57, "-")
-        )
-        rcvr_output = receiver.run_model(TOD,SF,R2)
-    elif type_rcvr=='TPR_2D':
-        results, T_p, _, _ = TPR_2D_model(CST, R2, SF, TOD, full_output=True)
-        N_hel, Q_max, Q_av, P_rc1, Qstg, P_SF2, eta_rcv, M_p, t_res, vel_p, it, solve_t_res = results
-        rcvr_output = {
-            "temps_parts": T_p,
-            "n_hels": N_hel,
-            "rad_flux_max": Q_max,
-            "rad_flux_avg": Q_av,
-            "heat_stored": Qstg,
-            "eta_rcv": eta_rcv,
-            "mass_stg": M_p,
-            "time_res": t_res,
-            "vel_p": vel_p
-        }
-    elif type_rcvr=='HPR_0D':
-        receiver = HPR0D(
-            rcv_nom_power=CST["P_rcv"],
-            heat_flux_avg= CST["Qavg"],
-            temp_ini= CST["T_pC"],
-            temp_out= CST["T_pH"],
-            material= CST["TSM"],
-            thickness_parts= CST["tz"],
-            factor_htc = Var(2.57, "-")
-        )
-        rcvr_output = receiver.run_model(SF)
-    elif type_rcvr=='TPR_0D':
-        rcvr_output = rcvr_TPR_0D_corr(CST, TOD, SF)
-    elif type_rcvr in ['SEVR','None']:
-        Prcv, eta_rcv, Qavg = CST['P_rcv'], CST['eta_rcv'], CST["Qavg"]
-        P_bdr = Prcv / eta_rcv
-        Q_acc    = SF['Q_h1'].cumsum()
-        N_hel    = len( Q_acc[ Q_acc < P_bdr ] ) + 1
-
-        rcvr_output = {
-            "temps_parts" : CST["T_pH"],
-            "n_hels" : len( Q_acc[ Q_acc < P_bdr ] ) + 1,
-            "rad_flux_max" : np.nan,            #No calculated
-            "rad_flux_avg" : Qavg,
-            "heat_stored": np.nan,            #No calculated
-            "eta_rcv": eta_rcv,
-            "mass_stg": np.nan,
-            "time_res": np.nan,
-            "vel_p": np.nan,
-        }
+    if isinstance(plant.receiver, HPR2D):
+        rcvr_output = plant.receiver.run_model(TOD,SF,R2)
+    elif isinstance(plant.receiver, HPR0D):
+        rcvr_output = plant.receiver.run_model(SF)
     else:
-        raise ValueError(f"Receiver type '{type_rcvr}' not recognized. Use 'HPR_2D', 'TPR_2D', 'HPR_0D', 'TPR_0D', 'SEVR' or 'None'.")
+        raise ValueError(f"Receiver type '{plant.rcv_type}' not recognized.")
 
-    T_p = rcvr_output["temps_parts"]
-    N_hel = rcvr_output["n_hels"]
-    Qstg = rcvr_output["heat_stored"]
-    M_p = rcvr_output["mass_stg"]
+    N_hel = rcvr_output["n_hels"].v
     eta_rcv = rcvr_output["eta_rcv"]
 
-    # Outputs
-    #Receiver Parameters
-    CST['T_p']     = rcvr_output["temps_parts"]
-    CST['eta_rcv'] = rcvr_output["eta_rcv"]
-    CST['Q_max']   = rcvr_output["rad_flux_max"]
-    CST['Q_av']    = rcvr_output["rad_flux_avg"]
-    CST['t_res']   = rcvr_output["time_res"]
-    
-    #Storage parameters
-    CST['M_p']   = M_p
-    CST['Q_stg'] = Qstg
-    
-    #General parameters
-    Prcv,eta_pb,SM = [CST[x] for x in ['P_rcv', 'eta_pb', 'SM']]
-    CST['P_pb']  = (Prcv / SM)
-    CST['P_el']  = (Prcv / SM) * eta_pb
-    CST['P_SF']  = Prcv / eta_rcv
-    
-    A_h1,eta_pb = [CST[x] for x in ['A_h1', 'eta_pb']]
-    
+    #Plant Parameters
+    Prcv = plant.rcv_power.gv("MW")
+    eta_pb = plant.pb_eta_des.gv("-")
+    SM = plant.solar_multiple.gv("-")
+    A_h1 = plant.Ah1.gv("m2")
+
     # Heliostat selection
     Q_acc    = SF['Q_h1'].cumsum()
     hlst     = Q_acc.iloc[:N_hel].index
     SF['hel_in'] = SF.index.isin(hlst)
     R2['hel_in'] = R2['hel'].isin(hlst)
-    CST['N_hel'] = N_hel
-    CST['P_SF_sim']  = SF[SF.hel_in]['Q_h1'].sum()
-    CST['P_rcv_sim'] = CST['P_SF_sim'] * eta_rcv
-    CST['P_el_sim']  = CST['P_rcv_sim'] * eta_pb
+    sf_power_sim  = SF[SF["hel_in"]]['Q_h1'].sum()
+    rcv_power_sim = sf_power_sim * eta_rcv
+    pb_power_sim  = rcv_power_sim * eta_pb
     
     # Calculating HB surface
-    HB.rmin = Var(R2[R2.hel_in]['rb'].quantile(0.0001), "m")
-    HB.rmax = Var(R2[R2.hel_in]['rb'].quantile(0.9981), "m")
+    HB.rmin = Var(R2[R2["hel_in"]]['rb'].quantile(0.0001), "m")
+    HB.rmax = Var(R2[R2["hel_in"]]['rb'].quantile(0.9981), "m")
     R2['hit_hb'] = (R2['rb']>HB.rmin.v)&(R2['rb']<HB.rmax.v)
-    
     HB.update_geometry(R2)
     HB.height_range()
+    M_HB_fin, M_HB_mirr, M_HB_str, M_HB_tot = BDR.HB_mass_cooling(HB, R2, SF)
+
+    plant.HB.mass_fin = Var(M_HB_fin, "ton")
+    plant.HB.mass_mirror = Var(M_HB_mirr, "ton")
+    plant.HB.mass_structure = Var(M_HB_str, "ton")
+    plant.HB.mass_total = Var(M_HB_tot, "ton")
+
+    plant.sf_n_hels = Var(N_hel, "-")                     # Number of heliostats
+    plant.sf_area = Var(N_hel*A_h1, "m2")                     # Solar Field area
+    plant.sf_power = Var(sf_power_sim, "MW")                     # Solar Field power (output)
+    plant.pb_power_th = Var(rcv_power_sim, "MW")        # Power Block thermal power (input)
+    plant.pb_power_el = Var(pb_power_sim, "MW")        # Power Block electrical power (output)
+    plant.storage_heat = Var(rcvr_output["heat_stored"], "MWh")      # Storage heat (output)
+    plant.rcv_massflowrate = Var(rcvr_output["mass_stg"], "kg/s")  # Receiver mass flow rate (to be calculated)
+
+    # Outputs
+    results_output = {
+        "temp_parts": rcvr_output["temps_parts"],
+        "eta_rcv": rcvr_output["eta_rcv"],
+        "rad_flux_max": rcvr_output["rad_flux_max"].v,
+        "rad_flux_avg": rcvr_output["rad_flux_avg"].v,
+        "time_res": rcvr_output["time_res"],
+        "vel_parts": rcvr_output["vel_parts"],
+        "mass_stg": rcvr_output["mass_stg"],
+        "heat_stored": rcvr_output["heat_stored"],
+        "n_hels": N_hel,
+        "iteration": rcvr_output["iteration"],
+        "solve_t_res": rcvr_output["solve_t_res"],
+        "full": rcvr_output["full"],
+        "pb_power_th": Prcv/SM,
+        "pb_power_el": (Prcv/SM)*eta_pb,
+        "sf_power": Prcv/eta_rcv,
+        "sf_power_sim": sf_power_sim,
+        "rcv_power_sim": rcv_power_sim,
+        "pb_power_sim": pb_power_sim,
+        "rmin": HB.rmin.v,
+        "rmax": HB.rmax.v,
+        "zmin": HB.zmin.v,
+        "zmax": HB.zmax.v,
+        "HB_surface_area": HB.surface_area.v,
+        "TOD_surface_area": TOD.surface_area.v,
+        "sf_surface_area": N_hel*A_h1,
+        "total_surface_area": HB.surface_area.v + TOD.surface_area.v + N_hel*A_h1,
+        "M_HB_fin": M_HB_fin,
+        "M_HB_total": M_HB_tot,
+        "costs_out": plant_costing_calculations(plant, SF),
+    }
     
-    #Masses of mirrors
-    M_HB_fin, M_HB_mirr, M_HB_str, M_HB_tot = BDR.HB_mass_cooling(R2, CST, SF)
-    
-    # Final parameters for mirrors
-    CST['rmin'] = HB.rmin
-    CST['rmax'] = HB.rmax
-    CST['zmin'] = HB.zmin
-    CST['zmax'] = HB.zmax
-    CST['S_HB']  = HB.surface_area.v
-    CST['S_TOD'] = TOD.surface_area.v
-    CST['S_SF']  = N_hel*A_h1
-    CST['S_tot'] = CST['S_HB'] + CST['S_TOD'] + CST['S_SF']
-    
-    CST['M_HB_fin'] = M_HB_fin
-    CST['M_HB_tot'] = M_HB_tot
-    
-    #Costing calculation
-    CST['Costs'] = BDR_cost(SF,CST)
-    
-    return R2, SF, CST
+    return R2, SF, results_output
 

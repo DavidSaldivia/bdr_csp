@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 import cantera as ct
-from bdr_csp import htc
+from antupy import htc
+from bdr_csp.htc import h_conv_Experiment
+
 
 @dataclass
 class BlackboxModel():
@@ -38,14 +40,10 @@ class BlackboxModel():
 
         temp_sky = htc.temp_sky_simplest(temp_amb)
         air.TP = (temp+temp_amb)/2., ct.one_atm
-        if HTC == 'NellisKlein':
-            h_conv = Fc * htc.h_conv_NellisKlein(temp, temp_amb, 0.01, air)
-        elif HTC == 'Holman':
-            h_conv = Fc * htc.h_conv_Holman(temp, temp_amb, 0.01, air)
-        elif HTC == 'Experiment':
-            h_conv = Fc * htc.h_conv_Experiment(temp, temp_amb, 0.1, air)
+        if HTC == 'Experiment':
+            h_conv = Fc * h_conv_Experiment(temp, temp_amb, 0.1, air)
         else:
-            raise ValueError(f"Unknown HTC model: {HTC}")
+            h_conv = Fc * htc.h_horizontal_surface_upper_hot(temp, temp_amb, 0.01, correlation=HTC)
 
         if view_factor is None:
             view_factor = 1.0        

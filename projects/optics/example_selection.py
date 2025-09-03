@@ -361,7 +361,7 @@ def get_radious_out(*args):
 from dataclasses import dataclass
 
 @dataclass
-class CSPPlant():
+class CSPBDRPlant():
     design_rad = Var(950, "W/m2")           # Design-point DNI [W/m2]
     design_day = 80                              # Design-point day [-]
     design_omega = Var(0.0, "rad")          # Design-point hour angle [rad]

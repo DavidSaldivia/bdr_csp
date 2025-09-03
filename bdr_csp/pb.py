@@ -12,7 +12,6 @@ import xarray as xr
 import scipy.optimize as spo
 import cantera as ct
 from pvlib.location import Location
-from scipy.interpolate import interp2d
 from scipy.interpolate import RegularGridInterpolator, LinearNDInterpolator
 
 from antupy import Var, CF
