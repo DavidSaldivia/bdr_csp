@@ -39,9 +39,9 @@ def get_data_location(plant: pb.PlantCSPBeamDownParticle, location: int) -> None
         plant.lat = Var(-25.0,"deg")
         plant.lng = Var(119.0, "deg")
         plant.state = "SA"
-
-def load_base_case():
-    pass
+    
+    else:
+        raise ValueError("Location not recognized")
 
 
 def dispatch_single_case(
@@ -65,7 +65,7 @@ def dispatch_single_case(
     df_sp = pb.load_spotprice_data(plant.state, year_i, year_f, dT)
     df = df_weather.merge(df_sp, how="inner", left_index=True, right_index=True)
     
-    dT = pd.to_datetime(df_weather.index).freq
+    dT = pd.to_datetime(df.index).freq
     print(dT)
 
     data = []

@@ -13,7 +13,7 @@ import scipy.optimize as spo
 
 from antupy import Var
 from bdr_csp.bdr import SolarField, HyperboloidMirror, TertiaryOpticalDevice
-from bdr_csp import spr as SPR
+from bdr_csp import spr as spr
 from bdr_csp.spr import TPR2D
 from bdr_csp.dir import DIRECTORY
 
@@ -115,106 +115,7 @@ class TPRStudyConfig:
         self.thickness_values = [0.04, 0.06, 0.08]
         self.tilt_angles = [-20, -27, -35]
 
-@dataclass
-class CSPBeamDownPlant:
-    """Enhanced CSP Beam Down Plant configuration for TPR systems."""
-    
-    # Environment conditions
-    Gbn: Var = Var(950, "W/m2")
-    day: int = 80
-    omega: Var = Var(0.0, "rad")
-    lat: Var = Var(-23., "deg")
-    lng: Var = Var(115.9, "deg")
-    temp_amb: Var = Var(300., "K")
-    
-    # Power and efficiency targets
-    power_el: Var = Var(10.0, "MW")
-    eta_pb: Var = Var(0.50, "-")
-    eta_stg: Var = Var(0.95, "-")
-    
-    # Solar field characteristics
-    eta_sfr: Var = Var(0.97*0.95*0.95, "-")
-    eta_rfl: Var = Var(0.95, "-")
-    A_h1: Var = Var(2.92**2, "m2")
-    N_pan: int = 1
-    err_x: Var = Var(0.001, "rad")
-    err_y: Var = Var(0.001, "rad")
-    type_shadow: str = "simple"
-    
-    # BDR and Tower characteristics
-    zf: Var = Var(50., "m")
-    fzv: Var = Var(0.83, "-")
-    eta_hbi: Var = Var(0.95, "-")
-    
-    # TOD characteristics
-    geometry: str = 'PB'
-    array: str = 'A'
-    xrc: Var = Var(0., "m")
-    yrc: Var = Var(0., "m")
-    zrc: Var = Var(10., "m")
-    
-    # Receiver characteristics
-    receiver: TPR2D = field(default_factory=TPR2D)
-    
-    def __post_init__(self):
-        """Calculate derived parameters."""
-        
-        # Calculate zv (vertex height)
-        self.zv = Var(self.fzv.gv("-") * self.zf.gv("m"), "m")
-        
-        file_SF = os.path.join(
-            DIR_DATA,
-            'mcrt_datasets_final',
-            'Dataset_zf_{:.0f}'.format(self.zf.gv("m"))
-        )
-        self.file_weather = os.path.join(
-            DIR_DATA, 'weather', "Alice_Springs_Real2000_Created20130430.csv"
-        )
-        # Create BDR components
-        self.HSF = SolarField(
-            zf=self.zf, A_h1=self.A_h1, N_pan=self.N_pan, file_SF=file_SF
-        )
-        self.HB = HyperboloidMirror(
-            zf=self.zf, fzv=self.fzv,
-            xrc=self.xrc, yrc=self.yrc, zrc=self.zrc,
-            eta_hbi=self.eta_hbi
-        )
-        self.TOD = TertiaryOpticalDevice(
-            geometry=self.geometry, array=self.array,
-            radius_out=Var(5.0, "m"),  # Will be optimized
-            Cg=Var(2.0, "-"),
-            xrc=self.xrc, yrc=self.yrc, zrc=self.zrc
-        )
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for compatibility with legacy functions."""
-        return {
-            'Gbn': self.Gbn.gv("W/m2"),
-            'day': self.day,
-            'omega': self.omega.gv("rad"),
-            'lat': self.lat.gv("deg"),
-            'lng': self.lng.gv("deg"),
-            'T_amb': self.temp_amb.gv("K"),
-            'P_el': self.power_el.gv("MW"),
-            'eta_pb': self.eta_pb.gv("-"),
-            'eta_sg': self.eta_stg.gv("-"),
-            'eta_sfr': self.eta_sfr.gv("-"),
-            'eta_rfl': self.eta_rfl.gv("-"),
-            'A_h1': self.A_h1.gv("m2"),
-            'N_pan': self.N_pan,
-            'err_x': self.err_x.gv("rad"),
-            'err_y': self.err_y.gv("rad"),
-            'zf': self.zf.gv("m"),
-            'fzv': self.fzv.gv("-"),
-            'eta_hbi': self.eta_hbi.gv("-"),
-            'Type': self.geometry,
-            'Array': self.array,
-            'xrc': self.xrc.gv("m"),
-            'yrc': self.yrc.gv("m"),
-            'zrc': self.zrc.gv("m"),
-            'zv': self.zv.gv("m"),
-            'type_shdw': self.type_shadow,
-        }
+
 
 class TPRAnalyzer:
     """Main analyzer for TPR (Tilted Particle Receiver) systems."""
@@ -265,7 +166,7 @@ class TPRAnalyzer:
         # Run coupled simulation
         try:
             # Run coupled simulation using the same approach as HPR
-            R2, SF, simulation_results = SPR.run_coupled_simulation(
+            R2, SF, simulation_results = spr.run_coupled_simulation(
                 plant, plant.HSF, plant.HB, plant.TOD
             )
             
@@ -320,12 +221,12 @@ class TPRAnalyzer:
         tz: float,
         tilt_angle: float,
         Arcv: float | None = None
-    ) -> CSPBeamDownPlant:
+    ) -> spr.CSPBeamDownPlant:
         """Create plant configuration with specified parameters."""
         # Calculate initial receiver area estimate if not provided
         if Arcv is None:
             Tp_avg = (self.config.temp_part_cold + self.config.temp_part_hot) / 2
-            eta_rcv = SPR.HTM_0D_blackbox(Tp_avg, Qavg)[0]
+            eta_rcv = spr.HTM_0D_blackbox(Tp_avg, Qavg)[0]
             Arcv = (Prcv / eta_rcv) / Qavg
         
         # Create TPR receiver
@@ -338,7 +239,7 @@ class TPRAnalyzer:
             tilt_angle=Var(tilt_angle, "deg")
         )
         
-        plant = CSPBeamDownPlant(
+        plant = spr.CSPBeamDownPlant(
             zf=Var(zf, "m"),
             fzv=Var(0.82, '-'),  # Initial guess
             A_h1=Var(self.config.heliostat_area, 'm2'),
@@ -360,7 +261,7 @@ class TPRAnalyzer:
         receiver_results: Dict[str, Any],
         R2: pd.DataFrame,
         SF: pd.DataFrame,
-        plant: CSPBeamDownPlant,
+        plant: spr.CSPBeamDownPlant,
         polygon_i: int
     ) -> Dict[str, Any]:
         """Extract detailed results from TPR simulation."""
@@ -595,12 +496,12 @@ class TPRAnalyzer:
         
         return df_comparison
     
-    def _run_0d_simulation(self, plant: CSPBeamDownPlant, Qavg: float, Prcv: float) -> Dict[str, Any]:
+    def _run_0d_simulation(self, plant: spr.CSPBeamDownPlant, Qavg: float, Prcv: float) -> Dict[str, Any]:
         """Run simplified 0D simulation for comparison."""
         # This is a simplified implementation for comparison
         # In practice, you would use the actual 0D model
         Tp_avg = (plant.receiver.temp_ini.gv("K") + plant.receiver.temp_out.gv("K")) / 2
-        eta_rcv = SPR.HTM_0D_blackbox(Tp_avg, Qavg)[0]
+        eta_rcv = spr.HTM_0D_blackbox(Tp_avg, Qavg)[0]
         
         return {
             'eta_rcv': eta_rcv,

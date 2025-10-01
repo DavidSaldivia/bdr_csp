@@ -1467,9 +1467,11 @@ def heliostat_selection(
 
 
 def optical_efficiencies(
-        plant: PlantCSPBeamDownParticle,
         R2: pd.DataFrame,
-        SF: pd.DataFrame
+        SF: pd.DataFrame,
+        irradiance: Var = Var(950, "W/m2"),
+        area_hel: Var = Var(2.92**2, "m2"),
+        reflectivity: Var = Var(0.95, "-"), 
     ) -> pd.DataFrame:
     """
     Function to obtain the optical efficiencies after a BDR simulation.
@@ -1489,10 +1491,10 @@ def optical_efficiencies(
         Same as SF input but including efficiencies
 
     """
-    
-    Gbn = plant.Gbn.gv("W/m2")
-    A_h1 = plant.Ah1.gv("m2")
-    eta_rfl = plant.eta_rfl.gv("-")
+
+    Gbn = irradiance.gv("W/m2")
+    A_h1 = area_hel.gv("m2")
+    eta_rfl = reflectivity.gv("-")
     
     SF2 = R2.groupby('hel')[['hel_in','hit_hb','hit_tod','hit_rcv']].sum()
     SF['Eta_att'] = get_eta_attenuation(R2)

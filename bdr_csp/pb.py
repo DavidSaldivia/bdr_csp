@@ -14,14 +14,14 @@ import cantera as ct
 from pvlib.location import Location
 from scipy.interpolate import RegularGridInterpolator, LinearNDInterpolator
 
-from antupy import Var, CF
+from antupy import Array, Var, CF
 from antupy.props import Air, CO2, Carbo
 from antupy.htc import h_horizontal_surface_upper_hot
 
 from bdr_csp import bdr, spr, htc
 from bdr_csp.dir import DIRECTORY
 
-ParticleReceiver = Union[spr.HPR0D, spr.HPR2D]
+ParticleReceiver = spr.HPR0D | spr.HPR2D | spr.TPR2D
 
 pd.set_option('display.max_columns', None)
 
@@ -75,14 +75,14 @@ class PlantCSPBeamDownParticle():
     cost_input: dict[str, float|str] = field(default_factory=spr.get_plant_costs)
 
     Gbn: Var = Var(950, "W/m2")                # Design-point DNI [W/m2]
-    day: int = 80                                        # Design-point day [-]
+    day: int = 80                              # Design-point day [-]
     omega: Var = Var(0.0, "rad")               # Design-point hour angle [rad]
     lat: Var = Var(-23., "deg")                # Latitude [°]
     lng: Var = Var(115.9, "deg")               # Longitude [°]
     state: str = "SA"
     temp_amb: Var = Var(300., "K")             # Ambient Temperature [K]
-    type_weather: str | None = 'TMY'                     # Weather source (for CF) Accepted: TMY, MERRA2, None
-    file_weather: str | None = None                      # Weather source (for CF)
+    type_weather: str | None = 'TMY'           # Weather source (for CF) Accepted: TMY, MERRA2, None
+    file_weather: str | None = None            # Weather source (for CF)
     DNI_min: Var = Var(400., "W/m2")           # minimum allowed DNI to operate
 
     # Characteristics of Solar Field
@@ -111,6 +111,8 @@ class PlantCSPBeamDownParticle():
     stg_eta_des: Var = Var(1.00,"-")                 #[-] Storage efficiency target (assumed 1 for now)
     # rcv_eta_des: Var = Var(0.75, "-")           #[-] Receiver efficiency target (initial value)
 
+    out: dict[str, Var|Array|float] = field(default_factory=dict)
+
 
     def __post_init__(self):
         # Outputs
@@ -138,9 +140,10 @@ class PlantCSPBeamDownParticle():
             'mcrt_datasets_final',
             'Dataset_zf_{:.0f}'.format(self.zf.gv("m"))
         )
-        self.file_weather = os.path.join(
-            DIR_DATA, 'weather', "Alice_Springs_Real2000_Created20130430.csv"
-        )
+        if self.file_weather is None:
+            self.file_weather = os.path.join(
+                DIR_DATA, 'weather', "Alice_Springs_Real2000_Created20130430.csv"
+            )
         self.HSF = bdr.SolarField(
             zf=self.zf, A_h1=self.Ah1, N_pan=self.Npan, file_SF=file_SF
         )
@@ -153,13 +156,14 @@ class PlantCSPBeamDownParticle():
             xrc=self.xrc, yrc=self.yrc, zrc=self.zrc,
         )
 
-        self.receiver = self._select_receiver(self.rcv_type)
+        self.receiver = self._select_receiver()
     
 
-    def _select_receiver(self, type_: str) -> ParticleReceiver:
+    def _select_receiver(self) -> ParticleReceiver:
         """
         Factory method to select the receiver type.
         """
+        type_ = self.rcv_type.upper()
         if type_ == 'HPR_2D':
             return spr.HPR2D(
                 rcv_nom_power=self.rcv_power,
@@ -176,21 +180,26 @@ class PlantCSPBeamDownParticle():
                 temp_out=self.stg_temp_hot,
                 thickness_parts=self.stg_thickness,
             )
-        elif type_ == "TPR_0D":
-            raise ValueError("Receiver type {type_} is not implemented yet.")
         elif type_ == "TPR_2D":
-            raise ValueError("Receiver type {type_} is not implemented yet.")
+            return spr.TPR2D(
+                rcv_nom_power=self.rcv_power,
+                heat_flux_avg=self.flux_avg,
+                temp_ini=self.stg_temp_cold,
+                temp_out=self.stg_temp_hot,
+                thickness_parts=self.stg_thickness,
+            )
+        elif type_ == "TPR_0D":
+            raise ValueError(f"Receiver type {type_} is not implemented yet.")
         else:
             raise ValueError(f"Receiver type '{type_}' not recognized. Use 'HPR_2D' or 'HPR_0D'.")
 
-    def run_thermal_subsystem(
-            self,
-            # save_detailed_results: bool = False,
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    def run_thermal_subsystem(self,) -> tuple[pd.DataFrame, pd.DataFrame]:
 
         HSF = self.HSF
         HB = self.HB
         TOD = self.TOD
+        Gbn = self.Gbn
+        A_h1 = self.Ah1
 
         #Getting the RayDataset
         R0, SF = HSF.load_dataset(save_plk=True)
@@ -210,7 +219,7 @@ class PlantCSPBeamDownParticle():
         R2 = TOD.mcrt_solver(R1, refl_error=False)
         
         ### Optical Efficiencies
-        SF = bdr.optical_efficiencies(self,R2,SF)
+        SF = bdr.optical_efficiencies(R2,SF,irradiance=Gbn, area_hel=A_h1)
         
         ### Running receiver simulation and getting the results
         receiver = self.receiver
@@ -326,70 +335,33 @@ class PlantCSPBeamDownParticle():
         return func_pb(np.array([T_maxC,TambsC]).transpose())
 
 
-def getting_basecase(
-        zf: Var,
-        Prcv: Var,
-        Qavg: Var,
-        fzv: Var,
-        save_detailed_results: bool = False,
-        dir_cases: str = ""
-    ) -> tuple[dict, pd.DataFrame, pd.DataFrame, bdr.TertiaryOpticalDevice]:
-
-    # constants
-    xrc = Var(0., "m")
-    yrc = Var(0., "m")
-    zrc = Var(10., "m")
-    Ah1 = Var(2.92**2, "m2")
-    Cg = Var(2, "-")
-    Npan = 1
-    geometry = "PB"
-    array = "A"
-
-    # checking if the file existed
-    case = 'case_zf{:.0f}_Q_avg{:.2f}_Prcv{:.1f}'.format(zf.gv("m"), Qavg.gv("MW/m2"), Prcv.gv("MW"))
-    # print(case)
-    file_base_case = os.path.join(dir_cases,f'{case}.plk')
-    
-    if isfile(file_base_case):
-        [CSTo,R2,SF,TOD] = pickle.load(open(file_base_case,'rb'))
-    else:
-        CSTi = bdr.CST_BaseCase()
-        CSTi['costs_in'] = spr.get_plant_costs()         #Plant related costs
-        CSTi['type_rcvr'] = 'HPR_0D'
-        file_SF = os.path.join(
-            DIR_DATA,
-            'mcrt_datasets_final',
-            'Dataset_zf_{:.0f}'.format(zf.gv("m"))
-        )
-        CSTi['file_weather'] = os.path.join(
-            DIR_DATA,
-            'weather',
-            "Alice_Springs_Real2000_Created20130430.csv"
-        )
-        CSTi['zf'] = zf.gv("m")
-        CSTi['Qavg'] = Qavg.gv("MW/m2")
-        CSTi['P_rcv'] = Prcv.gv("MW")
-        Tp_avg = (CSTi['T_pC']+CSTi['T_pH'])/2
-        CSTi['eta_rcv'] = spr.HTM_0D_blackbox( Tp_avg, CSTi['Qavg'] )[0]
-        CSTi['Arcv'] = (CSTi['P_rcv']/CSTi['eta_rcv']) / CSTi['Qavg']
-        Arcv = Var(CSTi["Arcv"], "m2")
-
-        HSF = bdr.SolarField(zf=zf, A_h1=Ah1, N_pan=Npan, file_SF=file_SF)
-        HB = bdr.HyperboloidMirror(
-            zf=zf, fzv=fzv, xrc=xrc, yrc=yrc, zrc=zrc, eta_hbi=CSTi["eta_rfl"]
-        )
-        TOD = bdr.TertiaryOpticalDevice(
-            geometry = geometry, array = array, Cg=Cg, receiver_area= Arcv,
-            xrc=xrc, yrc=yrc, zrc=zrc,
-        )
-        CSTi['type_rcvr'] = 'HPR_2D'
-        R2, SF, CSTo = spr.run_coupled_simulation(CSTi, HSF, HB, TOD)
-        print(CSTo)
+    def run_simulation(self, verbose: bool = False) -> dict[str, Var|Array|float]:
         
-        if save_detailed_results:
-            pickle.dump([CSTo,R2,SF,TOD],open(file_base_case,'wb'))
+        R2, SF = self.run_thermal_subsystem()
+        year_i = 2019
+        year_f = 2019
+        rcv_power = self.rcv_power
+        Ntower = self.Ntower
+        stg_cap = self.stg_cap
+        solar_multiple = self.solar_multiple
+        pb_eta_des = self.pb_eta_des
 
-    return (CSTo,R2,SF,TOD)
+        latitude = self.lat.gv("deg")
+        longitude = self.lng.gv("deg")
+
+        dT = 0.5            #Time in hours
+        df_weather = load_weather_data(latitude, longitude, year_i, year_f, dT)
+        df_sp = load_spotprice_data(self.state, year_i, year_f, dT)
+        df = df_weather.merge(df_sp, how="inner", left_index=True, right_index=True)
+        dT = pd.to_datetime(df.index).freq
+        
+        #Design power block efficiency and capacity
+        self.pb_power_th = Ntower * rcv_power / solar_multiple  #[MW] Design value for Power from receiver to power block
+        self.pb_power_el = pb_eta_des * self.pb_power_th       #[MW] Design value for Power Block generation
+        self.storage_heat = self.pb_power_th * stg_cap        #[MWh] Capacity of storage per tower
+
+        self.out = annual_performance(self, df)
+        return self.out
 
 
 def eta_optical(
@@ -573,18 +545,6 @@ def load_spotprice_data(
     )
     return df_sp_state
 
-# class CO2():
-#     _ct_solution = ct.Solution('gri30.yaml','gri30') # type: ignore
-#     def cp(self, temp: float, pressure: float) -> float:
-#         # Calculate specific heat capacity of CO2 at given temperature and pressure
-#         self._ct_solution.TPY = temp, pressure, 'CO2:1.00'
-#         return self._ct_solution.cp
-
-#     def rho(self, temp: float, pressure: float) -> float:
-#         # Calculate specific heat capacity of CO2 at given temperature and pressure
-#         self._ct_solution.TPY = temp, pressure, 'CO2:1.00'
-#         return self._ct_solution.density_mass
-
 
 @dataclass
 class PrimaryHeatExchanger:
@@ -653,9 +613,12 @@ class PrimaryHeatExchanger:
         parts_C = heat_exchanged / dtemp_parts
         parts_mfr = parts_C / parts_cp
         
-        lmtd = float(
-            ((temp_parts_out-temp_sco2_in) - (temp_parts_in-temp_sco2_out)).v
-            /np.log(((temp_parts_out-temp_sco2_in)/(temp_parts_in-temp_sco2_out)).v)
+        lmtd = Var(
+            float(
+                ((temp_parts_out-temp_sco2_in) - (temp_parts_in-temp_sco2_out)).v
+               /np.log(((temp_parts_out-temp_sco2_in)/(temp_parts_in-temp_sco2_out)).v)
+            ),
+            "K"
         )
         C_min = min(parts_C, sco2_C)
         C_max = max(parts_C, sco2_C)
@@ -663,13 +626,13 @@ class PrimaryHeatExchanger:
         epsilon = heat_exchanged  / heat_max
         
         surface_area = heat_exchanged / ( U_HX * lmtd)
-        dAdV = (np.pi*d_tubes*1)*n_tubes
+        dAdV = Var(1,"1/m")*(np.pi*d_tubes)*n_tubes
         
         volume   = surface_area/dAdV
         
         self.heat_exchanged = heat_exchanged.su("MW")
         self.epsilon = epsilon.su("-")
-        self.lmtd = Var(lmtd, "K")
+        self.lmtd = lmtd.su("K")
         self.surface_area = surface_area.su("m2")
         self.volume = volume.su("m3")
         self.parts_mfr = parts_mfr.su("kg/s")
@@ -906,7 +869,7 @@ def calc_financial_metrics(
 def annual_performance(
         plant: PlantCSPBeamDownParticle,
         df: pd.DataFrame,
-        ):
+        ) -> dict[str, Var|Array|float]:
     
     dT = 0.5
     rcv_power = plant.rcv_power.gv("MW")
@@ -953,6 +916,9 @@ def annual_performance(
     stg_min_stored = Var(
         df_out["heat_stored_cum_day"].min(), "MWh"
     )  # minimum energy stored in the storage system
+    stg_max_stored = Var(
+        df_out["heat_stored_cum_day"].max(), "MWh"
+    )  # maximum energy stored in the storage system
     
     #Updating costs and converting USD to AUD
     # Obtaining the costs for the power block an PHX
@@ -1021,6 +987,7 @@ def annual_performance(
     )
     results = {
         "stg_min_stored": stg_min_stored,
+        "stg_max_stored": stg_max_stored,
         "stg_heat_stored": stg_heat_stored,
         'pb_energy_dispatched':pb_energy_dispatched,
         'sf_cf':sf_cf,
