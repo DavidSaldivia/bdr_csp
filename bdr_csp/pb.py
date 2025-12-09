@@ -10,19 +10,18 @@ import pandas as pd
 import numpy as np
 import xarray as xr
 import scipy.optimize as spo
-import cantera as ct
 from pvlib.location import Location
 from scipy.interpolate import RegularGridInterpolator, LinearNDInterpolator
 
-from antupy import Array, Var, CF
-from antupy.props import Air, CO2, Carbo
-from antupy.htc import h_horizontal_surface_upper_hot
+from antupy import Var, Array, CF
+from antupy import Plant, component, constraint, derived, SimulationOutput
+from antupy.utils.props import Air, CO2, Carbo
+from antupy.utils.htc import h_horizontal_surface_upper_hot
 
-from bdr_csp import bdr, spr, htc
+from bdr_csp import bdr, spr
 from bdr_csp.dir import DIRECTORY
 
 ParticleReceiver = spr.HPR0D | spr.HPR2D | spr.TPR2D
-
 pd.set_option('display.max_columns', None)
 
 DIR_MAIN = os.path.dirname(
@@ -57,9 +56,10 @@ COLS_OUTPUT = [
 ]
 
 @dataclass
-class PlantCSPBeamDownParticle():
+class ModularCSPPlant(Plant):
     zf: Var = Var(50, "m")
     fzv: Var  = Var(0.818161, "-")
+    
     rcv_power: Var = Var(19.,"MW")
     flux_avg: Var = Var(1.25,"MW/m2")
     xrc: Var = Var(0., "m")
@@ -72,7 +72,7 @@ class PlantCSPBeamDownParticle():
     Cg: Var = Var(2, "-")
     rcv_area: Var = Var(20., "m2")
 
-    cost_input: dict[str, float|str] = field(default_factory=spr.get_plant_costs)
+    cost_in: dict[str, float|str] = field(default_factory=spr.get_plant_costs)
 
     Gbn: Var = Var(950, "W/m2")                # Design-point DNI [W/m2]
     day: int = 80                              # Design-point day [-]
@@ -90,7 +90,7 @@ class PlantCSPBeamDownParticle():
     err_tot: Var = Var(0.002, "-")             # [rad] Total reflected error
     type_shadow = 'simple'                               # Type of shadow modelling
     Ah1: Var = Var(2.92**2, "m2")
-    Npan: int = 1
+    Npan: Var = Var(1,"-")
 
     ### Receiver and Storage Tank characteristics
     rcv_type: str = 'HPR_0D'                            # model for Receiver
@@ -99,7 +99,7 @@ class PlantCSPBeamDownParticle():
     stg_temp_hot: Var = Var(1200,"K")              # particle temperature in hot tank
     stg_material: str  = 'CARBO'                             # Thermal Storage Material
     stg_thickness: Var = Var(0.05, "m")            # Thickness of material on conveyor belt
-    stg_cap: Var = Var(8., "hr")                   # Hours of storage
+    stg_capacity: Var = Var(8., "hr")                   # Hours of storage
     stg_h_to_d: Var = Var(0.5, "-")                # [-] height to diameter ratio for storage tank
     solar_multiple: Var = Var(2.0, "-")            # [-] Initial target for solar multiple
     
@@ -132,32 +132,56 @@ class PlantCSPBeamDownParticle():
         rcv_power = self.rcv_power.gv("MW")
         temp_avg = (self.stg_temp_cold.gv("K") + self.stg_temp_hot.gv("K")) / 2
 
-        self.rcv_eta_des = Var( spr.HTM_0D_blackbox( temp_avg, flux_avg )[0], "-" )
+        self.rcv_eta_des = Var( spr._HTM_0D_blackbox( temp_avg, flux_avg )[0], "-" )
         self.rcv_area = Var((rcv_power / self.rcv_eta_des.gv("-")) / flux_avg, "m2")
 
-        file_SF = os.path.join(
-            DIR_DATA,
-            'mcrt_datasets_final',
-            'Dataset_zf_{:.0f}'.format(self.zf.gv("m"))
-        )
         if self.file_weather is None:
             self.file_weather = os.path.join(
                 DIR_DATA, 'weather', "Alice_Springs_Real2000_Created20130430.csv"
             )
-        self.HSF = bdr.SolarField(
-            zf=self.zf, A_h1=self.Ah1, N_pan=self.Npan, file_SF=file_SF
-        )
-        self.HB = bdr.HyperboloidMirror(
-            zf=self.zf, fzv=self.fzv, eta_hbi=self.eta_rfl,
-            xrc=self.xrc, yrc=self.yrc, zrc=self.zrc,
-        )
-        self.TOD = bdr.TertiaryOpticalDevice(
-            geometry = self.geometry, array = self.array, Cg=self.Cg, receiver_area= self.rcv_area,
-            xrc=self.xrc, yrc=self.yrc, zrc=self.zrc,
-        )
-
-        self.receiver = self._select_receiver()
     
+    
+    @property
+    def HSF(self) -> bdr.SolarField:
+        def _file_sf():
+            return os.path.join(
+                DIR_DATA,
+                'mcrt_datasets_final',
+                'Dataset_zf_{:.0f}'.format(self.zf.gv("m"))
+            )
+        return component(bdr.SolarField(
+            zf=constraint(self.zf), 
+            A_h1=constraint(self.Ah1),
+            N_pan=constraint(self.Npan),
+            file_SF=derived(_file_sf, self.zf)
+        ))
+
+    @property
+    def HB(self) -> bdr.HyperboloidMirror:
+        return component(bdr.HyperboloidMirror(
+            zf=constraint(self.zf),
+            fzv=constraint(self.fzv),
+            eta_hbi=constraint(self.eta_rfl),
+            xrc=constraint(self.xrc),
+            yrc=constraint(self.yrc),
+            zrc=constraint(self.zrc),
+        ))
+
+    @property
+    def TOD(self) -> bdr.TertiaryOpticalDevice:
+        return component(bdr.TertiaryOpticalDevice(
+            geometry=constraint(self.geometry),
+            array=constraint(self.array),
+            Cg=constraint(self.Cg),
+            receiver_area=constraint(self.rcv_area),
+            xrc=constraint(self.xrc),
+            yrc=constraint(self.yrc),
+            zrc=constraint(self.zrc),
+        ))
+
+    @property
+    def receiver(self) -> ParticleReceiver:
+        return self._select_receiver()
 
     def _select_receiver(self) -> ParticleReceiver:
         """
@@ -212,7 +236,7 @@ class PlantCSPBeamDownParticle():
         R1['hit_hb'] = (R1['rb']>HB.rmin.gv("m")) & (R1['rb']<HB.rmax.gv("m"))
         
         SF = HB.shadow_simple(
-            lat=self.lat.v, lng=self.lng.v, type_shdw="simple", SF=SF
+            lat=self.lat, lng=self.lng, type_shdw="simple", SF=SF
         )
         
         #Interceptions with TOD
@@ -224,7 +248,7 @@ class PlantCSPBeamDownParticle():
         ### Running receiver simulation and getting the results
         receiver = self.receiver
         if isinstance(receiver, spr.HPR2D):
-            receiver.run_model(TOD,SF,R2)
+            receiver.run_model(SF,R2)
         elif isinstance(receiver, spr.HPR0D):
             receiver.run_model(SF)
         else:
@@ -335,7 +359,7 @@ class PlantCSPBeamDownParticle():
         return func_pb(np.array([T_maxC,TambsC]).transpose())
 
 
-    def run_simulation(self, verbose: bool = False) -> dict[str, Var|Array|float]:
+    def run_simulation(self, verbose: bool = False) -> SimulationOutput:
         
         R2, SF = self.run_thermal_subsystem()
         year_i = 2019
@@ -644,7 +668,7 @@ class PrimaryHeatExchanger:
 
 def dispatch_model_simple(
         df: pd.DataFrame,
-        plant: PlantCSPBeamDownParticle,
+        plant: ModularCSPPlant,
     ) -> pd.DataFrame:
 
 
@@ -867,7 +891,7 @@ def calc_financial_metrics(
 
 
 def annual_performance(
-        plant: PlantCSPBeamDownParticle,
+        plant: ModularCSPPlant,
         df: pd.DataFrame,
         ) -> dict[str, Var|Array|float]:
     

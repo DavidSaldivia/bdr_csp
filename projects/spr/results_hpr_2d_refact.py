@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Tuple, Optional
 from enum import Enum
 
 from antupy import Var
-from bdr_csp.pb import PlantCSPBeamDownParticle
+from bdr_csp.pb import ModularCSPPlant
 from bdr_csp.bdr import SolarField, HyperboloidMirror, TertiaryOpticalDevice
 from bdr_csp import spr as SPR
 
@@ -214,14 +214,14 @@ class HPRAnalyzer:
         Qavg: float,
         Prcv: float,
         tz: float
-    ) -> PlantCSPBeamDownParticle:
+    ) -> ModularCSPPlant:
         """Create plant configuration with specified parameters."""
         # Calculate initial receiver area estimate
         Tp_avg = (self.config.temp_part_cold + self.config.temp_part_hot) / 2
         eta_rcv = SPR.HTM_0D_blackbox(Tp_avg, Qavg)[0]
         Arcv = (Prcv / eta_rcv) / Qavg
         
-        plant = PlantCSPBeamDownParticle(
+        plant = ModularCSPPlant(
             zf=Var(zf, "m"),
             fzv=Var(0.82, '-'),  # Initial guess
             Ah1=Var(self.config.heliostat_area, 'm2'),
@@ -247,7 +247,7 @@ class HPRAnalyzer:
         simulation_results: Dict[str, Any],
         R2: pd.DataFrame,
         SF: pd.DataFrame,
-        plant: PlantCSPBeamDownParticle,
+        plant: ModularCSPPlant,
         polygon_i: int
     ) -> Dict[str, Any]:
         """Extract detailed results from simulation."""

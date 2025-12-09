@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from typing import Any, TYPE_CHECKING
-
-from os.path import isfile
+import os
 import pickle
+
+from dataclasses import dataclass
+from typing import Any, TYPE_CHECKING
+from os.path import isfile
 
 import numpy as np
 import pandas as pd
@@ -14,10 +14,18 @@ from scipy.optimize import fsolve
 from scipy.integrate import quad
 from pvlib.location import Location
 
-from antupy import Var
+from antupy import (
+    Var,
+    SimulationOutput,
+    Plant,
+    component,
+    constraint,
+    derived
+)
+
 
 if TYPE_CHECKING:
-    from bdr_csp.pb import PlantCSPBeamDownParticle
+    from bdr_csp.pb import ModularCSPPlant
 
 
 R0_COLS = ['xi','yi','zi', 'uxi','uyi','uzi', 'hel']
@@ -34,110 +42,194 @@ R2_COLS = ['hel','xi','yi','zi',
 
 
 @dataclass
-class CSPBDRPlant:
-    """Enhanced CSP Beam Down Receiver Plant configuration."""
+class CSPBDRPlant(Plant):
+    """BDR Plant """
     
     # Environment conditions
     Gbn: Var = Var(950, "W/m2")
-    day: int = 80
+    day: Var = Var(80, "day")
     omega: Var = Var(0.0, "rad")
     lat: Var = Var(-23., "deg")
     lng: Var = Var(115.9, "deg")
     temp_amb: Var = Var(300., "K")
-    
+
     # Power and efficiency targets
     power_el: Var = Var(10.0, "MW")
     eta_pb: Var = Var(0.50, "-")
     eta_stg: Var = Var(0.95, "-")
     eta_rcv: Var = Var(0.75, "-")
-    
+
+    # Solar field position
+    xrc: Var = Var(0., "m")
+    yrc: Var = Var(0., "m")
+
     # Solar field characteristics
     eta_sfr: Var = Var(0.97*0.95*0.95, "-")
     eta_rfl: Var = Var(0.95, "-")
     A_h1: Var = Var(2.92**2, "m2")
-    N_pan: int = 1
+    N_pan: Var = Var(1, "-")
     err_x: Var = Var(0.001, "rad")
     err_y: Var = Var(0.001, "rad")
     type_shadow: str = "simple"
-    
+
     # BDR and Tower characteristics
     zf: Var = Var(50., "m")
     fzv: Var = Var(0.83, "-")
-    eta_hbi: Var = Var(0.95, "-")
-    
+    fzc: Var = Var(0.20, "-")
+
     # TOD characteristics
     geometry: str = 'PB'
     array: str = 'A'
-    xrc: Var = Var(0., "m")
-    yrc: Var = Var(0., "m")
-    fzc: Var = Var(0.20, "-")
-    
+    Cg: Var = Var(2.0, "-")
+
     # Flux characteristics
-    Q_av: Var = Var(0.5, "MW/m2")
-    Q_mx: Var = Var(2.0, "MW/m2")
-    
+    flux_avg: Var = Var(0.5, "MW/m2")
+    flux_max: Var = Var(2.0, "MW/m2")
+
     def __post_init__(self):
-        """Calculate derived parameters."""
-        # Calculate zrc from fzc and zf
-        self.zrc = Var(self.fzc.gv("-") * self.zf.gv("m"), "m")
+        """Calculate derived parameters and initialize output dictionary."""
+        # Call parent initialization
+        super().__post_init__()
+
+        self.zrc = (self.fzc * self.zf).su("m")  # Calculate zrc from fzc and zf
+        self.zv = (self.fzv * self.zf).su("m")      # Calculate zv (vertex height)
+        self.nom_power_sf = (self.power_el / (self.eta_pb * self.eta_stg * self.eta_rcv)).su("MW")
         
-        # Calculate zv (vertex height)
-        self.zv = Var(self.fzv.gv("-") * self.zf.gv("m"), "m")
+        # Initialize output dictionary for parametric analysis
+        self.out = {}
         
-        # Calculate required solar field power
-        self.P_SF = Var(
-            self.power_el.gv("MW") / (self.eta_pb.gv("-") * self.eta_stg.gv("-") * self.eta_rcv.gv("-")),
-            "MW"
+    @property
+    def HSF(self) -> SolarField:
+        """Solar Field component with manual creation for computed parameters."""
+        def file_SF(zf: Var) -> str:
+            return os.path.join(
+                DIR_DATA, 'mcrt_datasets_final', f'Dataset_zf_{zf.gv("m"):.0f}'
+            )
+        return component(
+            SolarField(
+                zf=constraint(self.zf),
+                A_h1=Var(2.92**2, "m2"), 
+                N_pan=Var(1, "-"),
+                file_SF=derived(file_SF, self.zf),
+            )
         )
     
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for compatibility with legacy functions."""
-        return {
-            'Gbn': self.Gbn.gv("W/m2"),
-            'day': self.day,
-            'omega': self.omega.gv("rad"),
-            'lat': self.lat.gv("deg"),
-            'lng': self.lng.gv("deg"),
-            'T_amb': self.temp_amb.gv("K"),
-            'P_el': self.power_el.gv("MW"),
-            'eta_pb': self.eta_pb.gv("-"),
-            'eta_sg': self.eta_stg.gv("-"),
-            'eta_rcv': self.eta_rcv.gv("-"),
-            'eta_sfr': self.eta_sfr.gv("-"),
-            'eta_rfl': self.eta_rfl.gv("-"),
-            'A_h1': self.A_h1.gv("m2"),
-            'N_pan': self.N_pan,
-            'err_x': self.err_x.gv("rad"),
-            'err_y': self.err_y.gv("rad"),
-            'zf': self.zf.gv("m"),
-            'fzv': self.fzv.gv("-"),
-            'eta_hbi': self.eta_hbi.gv("-"),
-            'Type': self.geometry,
-            'Array': self.array,
-            'xrc': self.xrc.gv("m"),
-            'yrc': self.yrc.gv("m"),
-            'zrc': self.zrc.gv("m"),
-            'fzc': self.fzc.gv("-"),
-            'Q_av': self.Q_av.gv("MW/m2"),
-            'Q_mx': self.Q_mx.gv("MW/m2"),
-            'P_SF': self.P_SF.gv("MW"),
-            'zv': self.zv.gv("m"),
-            'type_shdw': self.type_shadow,
-        }
+    @property
+    def HB(self) -> HyperboloidMirror:
+        """Hyperboloid Mirror component with manual creation for computed parameters."""
+        return component(HyperboloidMirror(
+            zf=constraint(self.zf),
+            fzv=constraint(self.fzv),
+            xrc=constraint(self.xrc),
+            yrc=constraint(self.yrc),
+            zrc=constraint(self.zrc),
+            eta_hbi=Var(0.95, "-")
+        ))
 
+
+    @property
+    def TOD(self) -> TertiaryOpticalDevice:
+        """Tertiary Optical Device component with computed radius."""
+        def _get_receiver_area(nom_power_sf: Var, flux_avg: Var) -> Var:
+            return (nom_power_sf / flux_avg).su("m2")
+        
+        return component(TertiaryOpticalDevice(
+            geometry=constraint(self.geometry), 
+            array=constraint(self.array),
+            receiver_area=derived(_get_receiver_area, self.nom_power_sf, self.flux_avg),
+            Cg=constraint(self.Cg), 
+            xrc=constraint(self.xrc), 
+            yrc=constraint(self.yrc), 
+            zrc=constraint(self.zrc),
+        ))
+
+    
+    def run_simulation(self, verbose: bool = True) -> SimulationOutput:
+        """
+        Run BDR optical system simulation.
+        
+        This method contains the core simulation logic extracted from the original
+        run_parametric function, but adapted to work with antupy.Parametric framework.
+        Results are stored in self.out dictionary.
+        """
+        try:
+            if verbose:
+                print(f"Running BDR simulation: zf={self.zf.gv('m'):.0f}m, "
+                      f"fzv={self.fzv.gv('-'):.3f}, Cg={self.Cg.gv('-'):.1f}, "
+                      f"{self.geometry}-{self.array}")
+            
+            # Run heliostat selection using BDR module
+            R2, Etas, SF, status = heliostat_selection(
+                self, self.HSF, self.HB, self.TOD         # type: ignore
+            )
+            
+            # Calculate results
+            N_hel = Var(len(R2[R2["hel_in"]]["hel"].unique()), "-")
+            S_hel = N_hel * self.A_h1
+            Pth_real = Var(SF[SF['hel_in']]['Q_h1'].sum(), "MW")
+            Pel_real = Pth_real * (self.eta_pb * self.eta_stg * self.eta_rcv)
+            
+            # Calculate radiation flux
+            total_rad = float(Etas['Eta_SF']) * (self.Gbn * self.A_h1 * N_hel.gv("-"))
+            Q_rcv, _, _ = self.TOD.radiation_flux(R2, total_rad.gv("W"))
+            Q_max = Var(Q_rcv.max(), "kW/m2")
+            
+            # Store results in self.out dictionary
+            self.out = {
+                'eta_cos': Var(Etas['Eta_cos'], "-"),
+                'eta_blk': Var(Etas['Eta_blk'], "-"), 
+                'eta_att': Var(Etas['Eta_att'], "-"),
+                'eta_hbi': Var(Etas['Eta_hbi'], "-"),
+                'eta_tdi': Var(Etas['Eta_tdi'], "-"),
+                'eta_tdr': Var(Etas['Eta_tdr'], "-"),
+                'eta_TOD': Var(Etas['Eta_TOD'], "-"),
+                'eta_BDR': Var(Etas['Eta_BDR'], "-"),
+                'eta_SF': Var(Etas['Eta_SF'], "-"),
+                'Pel_real': Pel_real.su("MW"),
+                'N_hel': N_hel.su("-"),
+                'S_hel': S_hel.su("m2"),
+                'S_HB': self.HB.surface_area.su("m2"),
+                'S_TOD': self.TOD.surface_area.su("m2"),
+                'H_TOD': self.TOD.height.su("m"),
+                'rO': self.TOD.radius_out.su("m"),
+                'Q_max': Q_max.su("kW/m2"),
+                'status': status
+            }
+            
+            if verbose:
+                print(f"  Success: N_hel={self.out['N_hel']}, eta_SF={self.out['eta_SF']}, "
+                      f"Q_max={self.out['Q_max']}")
+                
+        except Exception as e:
+            error_msg = f"Simulation failed: {str(e)}"
+            if verbose:
+                print(f"  {error_msg}")
+            
+            # Store error information
+            self.out = {
+                'status': 'FAILED',
+                'error': error_msg,
+                # Initialize other outputs with NaN or zero
+                'eta_SF': Var(0.0, "-"),
+                'N_hel': Var(0, "-"),
+                'Q_max': Var(0.0, "kW/m2"),
+                'Pel_real': Var(0.0, "MW"),
+            }
+        
+        return self.out
 
 @dataclass
 class SolarField():
     # Characteristics of Solar Field
     zf: Var = Var(50., "m")
     eta_sfr: Var = Var(0.97*0.95*0.95, "-")   # Solar field reflectivity
-    eta_rfl: Var = Var(0.95, "m")             # Includes mirror refl, soiling and refl. surf. ratio. Used for HB and CPC
+    eta_rfl: Var = Var(0.95, "-")             # Includes mirror refl, soiling and refl. surf. ratio. Used for HB and CPC
     err_x: Var = Var(0.001, "rad")            # Reflected error mirror in X direction
     err_y: Var = Var(0.001, "rad")            # Reflected error mirror in X direction
     A_h1: Var = Var(2.97**2,"m2")             # Area of one heliostat
-    N_pan: int = 1                                      # Number of panels per heliostat
-    file_SF: str|None = None                            # File with the rays data
-    helios: pd.DataFrame|None = None                    # heliostats DataFrame
+    N_pan: Var = Var(1, "-")                  # Number of panels per heliostat
+    file_SF: str|None = None                  # File with the rays data
+    helios: pd.DataFrame|None = None          # heliostats DataFrame
 
     def load_dataset(self, **kwargs) -> tuple[pd.DataFrame,pd.DataFrame]:
         """
@@ -166,7 +258,7 @@ class SolarField():
         
         #kwargs can be N_pan, N_hel, convert
         file_SF = self.file_SF
-        N_pan = kwargs['N_pan'] if 'N_pan' in kwargs else 1
+        N_pan = int(self.N_pan.gv("-"))
         save_plk = kwargs['save_plk'] if 'save_plk' in kwargs else False
         read_plk = kwargs['read_plk'] if 'read_plk' in kwargs else True
         
@@ -251,7 +343,26 @@ class HyperboloidMirror():
 
     @property
     def zv(self) -> Var:
-        return Var(self.zf.gv("m") * self.fzv.gv("-"), "m")
+        return (self.zf * self.fzv).su("m")
+
+    def run_model(
+            self,
+            R0: pd.DataFrame,
+            SF: pd.DataFrame,
+            lat: Var | None = None,
+            lng: Var | None = None,
+            refl_error: bool = True,
+            verbose: bool = False,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        #Getting interceptions with HB
+        R1 = self.mcrt_direct(R0, refl_error=refl_error)
+        R1['hel_in'] = True
+        self.rmin = Var( R1['rb'].quantile(0.0001), "m")
+        self.rmax = Var( R1['rb'].quantile(0.9981), "m")
+        R1['hit_hb'] = (R1['rb']>self.rmin.gv("m")) & (R1['rb']<self.rmax.gv("m"))
+        if lat is not None and lng is not None:
+            SF = self.shadow_simple( lat=lat, lng=lng, type_shdw="simple", SF=SF)
+        return R1, SF
 
     def height_range(self) -> tuple[float, float]:       # HB_zrange
         zf = self.zf.gv("m")
@@ -502,10 +613,13 @@ class HyperboloidMirror():
 
     def shadow_simple(
             self,
-            lat: float,
-            lng: float,
+            lat: Var,
+            lng: Var,
             type_shdw: str,
-            SF: pd.DataFrame
+            SF: pd.DataFrame,
+            Ns: list[int] = [4,34,64,95,125,156,186,217,246,277,307,338],
+            tdelta: float = 0.25,
+            tz: str = 'Australia/Darwin'
         ) -> pd.DataFrame:
         
         if type_shdw=='None':
@@ -516,13 +630,12 @@ class HyperboloidMirror():
         self.height_range()
         zmin = self.zmin.gv("m")
         zmax = self.zmax.gv("m")
+        lat_v = lat.gv("deg")
+        lng_v = lng.gv("deg")
         
-        Ns = [4,34,64,95,125,156,186,217,246,277,307,338]
-        tdelta = 0.25
-        tz = 'Australia/Darwin'
-        times = pd.date_range('2021-01-01','2021-12-31 23:59:00', tz=tz, freq=str(tdelta)+'h')
-        times = times[times.dayofyear.isin(Ns)]
-        sol_pos = Location(lat, lng, tz=tz ).get_solarposition(times)
+        time_pos = pd.date_range('2021-01-01','2021-12-31 23:59:00', tz=tz, freq=str(tdelta)+'h')
+        time_pos = time_pos[time_pos.dayofyear.isin(Ns)]
+        sol_pos = Location(lat_v, lng_v, tz=tz ).get_solarposition(time_pos)
         sol_pos = pd.DataFrame(sol_pos[sol_pos["elevation"]>0])
         
         alt_r  = np.radians(sol_pos["elevation"])
@@ -566,7 +679,7 @@ class HyperboloidMirror():
         eta_rfl = self.eta_rfl.gv("-")
 
         Etas = SF[SF['hel_in']].mean()
-        hlst = SF[SF.hel_in].index
+        hlst = SF[SF['hel_in']].index
         N_hel = len(hlst)
         
         out  = R2[(R2['hel_in'])&(R2['hit_hb'])]
@@ -1419,7 +1532,7 @@ def heliostat_selection(
         Q_acc    = SF['Q_h1'].cumsum()
         
         #Getting the number of heliostats required and the list of heliostats
-        N_hel0  = len( Q_acc[ Q_acc < CST.P_SF.v ] ) + 1
+        N_hel0  = len( Q_acc[ Q_acc < CST.nom_power_sf.v ] ) + 1
         N_hel   = int(np.ceil( suav*N_ant + (1-suav)* N_hel0 ))    #Attenuation factor
         if N_an2==N_hel:
             N_hel = int((N_hel+N_ant)/2)    #In case we are in a loop
@@ -1662,14 +1775,14 @@ def HB_mass_cooling(
         Gbn: float = 950,
         A_h1: float = 2.92**2,
         full_results: bool = False
-    ) -> tuple[float, float, float, float] | tuple:
+    ) -> tuple[float, float, float, float]:
 
     rmin = HB.rmin.gv("m")
     rmax = HB.rmax.gv("m")
     eta_rfl = HB.eta_rfl.gv("-")
 
     Etas = SF[SF['hel_in']].mean()
-    hlst = SF[SF.hel_in].index
+    hlst = SF[SF['hel_in']].index
     N_hel = len(hlst)
     
     out  = R2[(R2['hel_in'])&(R2['hit_hb'])]

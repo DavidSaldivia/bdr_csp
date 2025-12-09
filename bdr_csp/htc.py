@@ -1,5 +1,5 @@
 from antupy import Var
-from antupy.props import Air
+from antupy.utils.props import Air
 
 SIGMA_CONSTANT = 5.67e-8
 

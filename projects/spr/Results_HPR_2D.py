@@ -27,7 +27,7 @@ from bdr_csp.bdr import (
     HyperboloidMirror,
     TertiaryOpticalDevice,
 )
-from bdr_csp.pb import PlantCSPBeamDownParticle
+from bdr_csp.pb import ModularCSPPlant
 from bdr_csp.dir import DIRECTORY
 
 DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
@@ -108,7 +108,7 @@ def parametric_study(
         Tp_avg = (temp_part_cold+temp_part_hot)/2
         eta_rcv = SPR.HTM_0D_blackbox( Tp_avg, Qavg )[0]
         Arcv = (Prcv/eta_rcv) / Qavg
-        plant = PlantCSPBeamDownParticle(
+        plant = ModularCSPPlant(
             zf = Var(zf, "m"),
             fzv = Var(fzv, '-'),
             Ah1 = Var(Ah1, 'm2'),

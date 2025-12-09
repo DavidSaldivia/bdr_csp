@@ -1,0 +1,4 @@
+# Ignore pickle files (simulation results)
+*.plk
+*.pkl
+*.pickle

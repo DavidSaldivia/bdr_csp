@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from antupy import Array, Var
-from antupy.analyser.par import Parametric
+from antupy.analyser import Parametric
 
 import bdr_csp.pb as pb
 
@@ -17,7 +17,7 @@ COLS_OUTPUT = pb.COLS_OUTPUT
 
 
 def test_parametric_dispatch():
-    base_case = pb.PlantCSPBeamDownParticle(
+    base_case = pb.ModularCSPPlant(
         zf = Var(50., "m"),
         fzv = Var(0.818161, "-"),
         rcv_power = Var(19.,"MW"),

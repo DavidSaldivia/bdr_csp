@@ -1,0 +1,17 @@
+,fzv,Cg,status,error,eta_SF,N_hel,Q_max,Pel_real
+0,0.8,1.5,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+1,0.8,2.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+2,0.8,3.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+3,0.8,4.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+4,0.8200000000000001,1.5,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+5,0.8200000000000001,2.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+6,0.8200000000000001,3.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+7,0.8200000000000001,4.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+8,0.8400000000000001,1.5,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+9,0.8400000000000001,2.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+10,0.8400000000000001,3.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+11,0.8400000000000001,4.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+12,0.8600000000000001,1.5,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+13,0.8600000000000001,2.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+14,0.8600000000000001,3.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0
+15,0.8600000000000001,4.0,FAILED,Simulation failed: Error executing derived parameter calculation: name 'DIR_DATA' is not defined,0.0,0.0,0.0,0.0

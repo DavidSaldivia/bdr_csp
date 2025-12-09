@@ -75,35 +75,29 @@ class CSPBDRPlant:
         """Calculate derived parameters."""
         # Calculate zrc if not explicitly provided
         if not hasattr(self, '_zrc_set'):
-            self.zrc = Var(self.fzc.gv("-") * self.zf.gv("m"), "m")
+            self.zrc = (self.fzc * self.zf).su("m")
         
         # Calculate zv (vertex height)
-        self.zv = Var(self.fzv.gv("-") * self.zf.gv("m"), "m")
+        self.zv = (self.fzv * self.zf).su("m")
         
         # Calculate required solar field power
-        self.P_SF = Var(
-            self.power_el.gv("MW") / (self.eta_pb.gv("-") * self.eta_stg.gv("-") * self.eta_rcv.gv("-")),
-            "MW"
-        )
+        self.P_SF = (self.power_el / (self.eta_pb * self.eta_stg * self.eta_rcv)).su("MW")
     
     @property
     def power_th(self) -> Var:
         """Calculate thermal power requirement."""
-        return Var(
-            self.power_el.gv("MW") / (self.eta_pb.gv("-") * self.eta_stg.gv("-")),
-            "MW"
-        )
+        return (self.power_el / (self.eta_pb * self.eta_stg)).su("MW")
     
     def set_zrc(self, zrc: Var) -> None:
         """Explicitly set zrc value."""
         self.zrc = zrc
-        self.fzc = Var(zrc.gv("m") / self.zf.gv("m"), "-")
+        self.fzc = (self.zrc / self.zf).su("-")
         self._zrc_set = True
     
     def set_zv(self, zv: Var) -> None:
         """Explicitly set vertex height."""
         self.zv = zv
-        self.fzv = Var(zv.gv("m") / self.zf.gv("m"), "-")
+        self.fzv = (zv / self.zf).su("-")
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format for compatibility with legacy functions."""
@@ -422,7 +416,7 @@ def run_parametric(
         plant_dict = plant.to_dict()
         
         # Call the heliostat selection function
-        R2, Etas, SF, status = bdr.heliostat_selection(plant_dict, HSF, HB, TOD)
+        R2, Etas, SF, status = bdr.heliostat_selection(plant, HSF, HB, TOD)
         
         # Post-calculations
         N_hel = len(R2[R2["hel_in"]]["hel"].unique())

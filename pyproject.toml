@@ -19,6 +19,7 @@ netcdf4 = "^1.7.2"
 polars = "^1.30.0"
 fsspec = "^2025.5.1"
 antupy = {path = "C:/Users/david/projects/antupy", develop = true}
+scikit-optimize = "^0.10.2"
 
 [tool.poetry.group.dev.dependencies]
 mypy = "^1.11.0"

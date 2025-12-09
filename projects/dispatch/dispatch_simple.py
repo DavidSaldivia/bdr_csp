@@ -14,7 +14,7 @@ DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
 COLS_INPUT = pb.COLS_INPUT
 COLS_OUTPUT = pb.COLS_OUTPUT
 
-def get_data_location(plant: pb.PlantCSPBeamDownParticle, location: int) -> None:
+def get_data_location(plant: pb.ModularCSPPlant, location: int) -> None:
     if location == 1:
         plant.lat = Var(-20.7,"deg")
         plant.lng = Var(139.5, "deg")
@@ -45,7 +45,7 @@ def get_data_location(plant: pb.PlantCSPBeamDownParticle, location: int) -> None
 
 
 def dispatch_single_case(
-        plant: pb.PlantCSPBeamDownParticle,
+        plant: pb.ModularCSPPlant,
         year_i: int = 2019,
         year_f: int = 2019,
         ) -> dict:
@@ -88,7 +88,7 @@ def dispatch_single_case(
 
 def main():
 
-    plant = pb.PlantCSPBeamDownParticle(
+    plant = pb.ModularCSPPlant(
         zf = Var(50., "m"),
         fzv = Var(0.818161, "-"),
         rcv_power = Var(19.,"MW"),
