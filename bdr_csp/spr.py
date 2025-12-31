@@ -226,6 +226,38 @@ class CSPBeamDownParticlePlant:
             reflectivity=hsf.eta_rfl
         )
         return R2, SF
+    
+    def run_costing_calculations(self,
+        result_output: dict[str, float],
+        SF: pd.DataFrame
+    ) -> dict[str, float]:
+        costing_params = {
+        "zrc": self.zrc,
+        "A_h1": self.HSF.A_h1,
+        "T_stg": self.stg_capacity,
+        "SM": self.solar_multiple,
+        "pb_eta": self.pb_eta_des,
+        "T_pH": self.stg_temp_hot,
+        "T_pC": self.stg_temp_cold,
+        "HtD_stg": self.stg_h_to_d,
+        "Gbn": self.Gbn,
+        "DNI_min": self.DNI_min,
+        "Ntower": self.Ntower,
+        "material": self.receiver.material,
+        "file_weather": self.file_weather,
+        "costs_in": self.costs_in,
+        "S_HB" : result_output["hb_surface_area"],
+        "zmax" : result_output["hb_zmax"],
+        "S_TOD": result_output["tod_surface_area"],
+        "Arcv": result_output["receiver_area"],
+        "M_p": result_output["mass_stg"],
+        "P_rcv": result_output["rcv_power_sim"],
+        "M_HB_fin": result_output["hb_mass_fin"],
+        "M_HB_t": result_output["hb_mass_total"],
+        "S_land" : get_land_area(SF, self.HSF.A_h1)[0],
+        "S_hel" : get_land_area(SF, self.HSF.A_h1)[1],
+    }
+        return plant_costing_calculations(costing_params=costing_params)
 
     def run_simulation(self, verbose: bool = True, testing: bool = False) -> SimulationOutput:
         
@@ -346,7 +378,7 @@ class CSPBeamDownParticlePlant:
         
         if verbose:
             print("Running costing calculations...")
-        costs_out = plant_costing_calculations(self, results_output=results_output, SF=SF)
+        costs_out = self.run_costing_calculations(result_output=results_output, SF=SF)
         results_output["costs_out"] = costs_out
         results_output["lcoh"] = costs_out['LCOH']
         results_output["lcoe"] = costs_out['LCOE']
@@ -1863,35 +1895,32 @@ def get_lcoe(
 
 
 def plant_costing_calculations(
-        plant: ModularCSPPlant | CSPBeamDownParticlePlant,
-        results_output: dict[str, Var],
-        SF: pd.DataFrame,
-) -> dict[str,float]:         # ex BDR_cost
+        costing_params: dict[str, Var],
+) -> dict[str,Var]:         # ex BDR_cost
 
-    zrc = plant.zrc
-    A_h1 = plant.HSF.A_h1
-    T_stg = plant.stg_capacity
-    SM = plant.solar_multiple
-    pb_eta = plant.pb_eta_des
-    T_pH = plant.stg_temp_hot
-    T_pC = plant.stg_temp_cold
-    HtD_stg = plant.stg_h_to_d
-    Gbn = plant.Gbn
-    DNI_min = plant.DNI_min
-    Ntower = plant.Ntower
-    material = plant.receiver.material
-
-    S_HB = results_output["hb_surface_area"]
-    zmax = results_output["hb_zmax"]
-
-    S_TOD = results_output["tod_surface_area"]
-    Arcv = results_output["receiver_area"]
-
-    M_p = results_output["mass_stg"]
-    P_rcv = results_output["rcv_power_sim"]
+    zrc = costing_params['zrc']
+    A_h1 = costing_params['A_h1']
+    T_stg = costing_params['T_stg']
+    SM = costing_params['SM']
+    pb_eta = costing_params['pb_eta']
+    T_pH = costing_params['T_pH']
+    T_pC = costing_params['T_pC']
+    HtD_stg = costing_params['HtD_stg']
+    Ntower = costing_params['Ntower']
+    material: Carbo = costing_params['material'] #type: ignore
+    costs_in: dict[str, float] = costing_params['costs_in'] #type: ignore
+    S_HB = costing_params['S_HB']
+    zmax = costing_params['zmax']
+    S_TOD = costing_params['S_TOD']
+    Arcv = costing_params['Arcv']
+    M_p = costing_params['M_p']
+    P_rcv = costing_params['P_rcv']
+    M_HB_fin = costing_params['M_HB_fin']
+    M_HB_t = costing_params['M_HB_t']
+    S_land = costing_params['S_land']
+    S_hel = costing_params['S_hel']
     
     #Solar field related costs
-    costs_in = plant.costs_in
     R_ftl = Var(costs_in['R_ftl'], "-")         # Field to land ratio, SolarPilot
     C_land = Var(costs_in['C_land'], "USD/m2")       # USD per m2 of land. SAM/SolarPilot (10000 USD/acre)
     C_site = Var(costs_in['C_site'], "USD/m2")       # USD per m2 of heliostat. SAM/SolarPilot
@@ -1919,37 +1948,23 @@ def plant_costing_calculations(
     P_pb  = P_rcv / SM              #[MWth]  Thermal energy delivered to power block
     Q_stg = P_pb * T_stg            #[MWh]  Energy storage required to meet T_stg
     
-    Co = {}      #Everything in MM USD, unless explicitely indicated
+    Co: dict[str, Var] = {}      #Everything in MM USD, unless explicitely indicated
     
     # CAPACITY FACTOR
     # CF_sf = Capacity Factor (Solar field)
     # CF_pb = Capacity Factor (Power block)
     
-    if plant.file_weather is not None:
-        df_w = pd.read_csv(plant.file_weather,header=1)
-        DNI_tag = 'DNI (W/m^2)'
-        DNI_des = Gbn.gv("W/m2")
-
-        F_sf    = 0.9       #Factor to make it conservative
-        Qacc    = df_w[df_w[DNI_tag]>=DNI_min][DNI_tag].sum()  #In Wh/m2
-        CF_sf  = F_sf * Qacc / (DNI_des*len(df_w))
-        CF_pb = CF_sf*SM.gv("-")
-    else:
-        print('Weather File not found. Default value used for CF_sf')
-        CF_sf  = Var(costs_in['CF_sf'], "-")
-        CF_pb = CF_sf*SM                      # Assumed all is converted into electricity
+    CF_sf  = Var(costs_in['CF_sf'], "-")
+    CF_pb  = Var(costs_in['CF_pb'], "-") if 'CF_pb' in costs_in else CF_sf*SM
     
     Co['CF_sf'] = CF_sf
     Co['CF_pb'] = CF_pb
     
     # LAND CALCULATIONS
-    S_land, S_hel = get_land_area(SF, A_h1)
     Co['land'] = ( C_land*S_land*R_ftl + C_site*S_hel )
     Co['land_prod'] = P_rcv/S_land
     
     # MIRROR MASSES AND COSTS
-    M_HB_fin  = results_output["hb_mass_fin"]          # Fins components of HB weight
-    M_HB_t    = results_output["hb_mass_total"]            # Total weight of HB
     F_struc_hel = Var(0.17, "-")
     zhel        = Var(4.0, "m")
 
@@ -1977,7 +1992,7 @@ def plant_costing_calculations(
     
     # TOTAL HEAT COSTS
     Co['Heat'] = (Co['land'] + Co['hel'] + Co['HB'] + Co['TOD'] + Co['rcv'] + Co['tow'] + Co['stg']) * C_xtra
-    Co['SCH'] = Co['Heat'] / P_rcv if P_rcv.v>0 else np.inf      #(USD/Wp) Specific cost of Heat (from receiver)
+    Co['SCH'] = Co['Heat'] / P_rcv if P_rcv.v>0 else Var(None, "USD/W")      #(USD/Wp) Specific cost of Heat (from receiver)
     
     #Levelised cost of heat (sun-to-storage)
     Co['LCOH'] =  get_lcoh(Co['Heat'], C_OM, P_rcv, CF_sf, DR, Ny)

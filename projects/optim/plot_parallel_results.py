@@ -133,7 +133,7 @@ def plot_min_LCOH_for_diff_Qavg(
         ax2b.tick_params(axis='both', which='major', labelsize=fs-2)
         ax2b.set_yticks(np.linspace(ax2b.get_yticks()[0], ax2b.get_yticks()[-1], len(ax1b.get_yticks())))
         ax2b.set_yticks(np.linspace(0, 35, len(ax1b.get_yticks())))
-        plt.show()
+        # plt.show()
         
         i+=1
         figb.savefig(
@@ -239,15 +239,7 @@ def final_optimization_plot(
 
     def func3(x, *params):
         A, b, c = params
-        return c + A * np.exp(-x * b)
-
-    def func4(x, *params):
-        A, b, c = params
-        return c - A * np.exp(-x * b)
-
-    def func5(x, *params):
-        A, b, c = params
-        return c + A * np.exp(-x * b)
+        return c + A * np.exp(x * b)
     
     def func6(x, *params):
         a, b, c = params
@@ -266,26 +258,26 @@ def final_optimization_plot(
         "lcoh": {
             "label_y": r"Minimum LCOH ($USD/MW_{th}$)",
             "func_fit": func3,
-            "p0": (10., 0.05, 20.),
+            "p0": (10., -0.05, 20.),
             "color": 'mediumblue',
             "marker": "s",
-            "eq_text": r'$LCOE={:.1f}+{:.1f}e^{{-{:.3f}z_f}}$',
+            "eq_text": r'$LCOE={:.2f}+{:.3f}e^{{{:.3f}z_f}}$',
             },
         "flux_avg": {
             "label_y": r"Average Radiation flux ($MW_{th}/m^2$)",
-            "func_fit": func6,
-            "p0": (1., 0.05, 1.),
+            "func_fit": func3,
+            "p0": (0.5, -0.05, 0.2),
             "color": 'darkgreen',
             "marker": "o",
-            "eq_text": r'$Q_{{avg}}={:.2f}z_f^2+{:.2f}z_f+{:.2f}$',
+            "eq_text": r'$Q_{{avg}}={:.3f}+{:.3f}e^{{-{:.3f}z_f}}$',
         },
         "fzv": {
             "label_y" : r'Optimal $f_{zv} (-)$',
-            "func_fit": func5,
-            "p0": (10., 0.05, 20.),
+            "func_fit": func3,
+            "p0": (0.5, -0.05, 0.90),
             "color": 'darkviolet',
             "marker": "o",
-            "eq_text": r'$f_{{zv}} = {:.2f}+{:.2f}e^{{-{:.3f}z_f}}$',
+            "eq_text": r'$f_{{zv}} = {:.3f}+{:.3f}e^{{{:.3f}z_f}}$',
         },
         "n_hels": {
             "label_y": r"Optimal Number of Heliostats $N_{hel} (-)$",
@@ -297,19 +289,19 @@ def final_optimization_plot(
         },
         "eta_sf": {
             "label_y": r"Optimal Solar Field Efficiency $\eta_{SF} (-)$",
-            "func_fit": func4,
-            "p0": (0.3, 0.01, 0.7),
+            "func_fit": func3,
+            "p0": (0.5, -0.05, 0.4),
             "color": 'teal',
             "marker": "o",
-            "eq_text": r'$\eta_{{SF}} = {:.3f}-{:.3f}e^{{-{:.3f}z_f}}$',
+            "eq_text": r'$\eta_{{SF}} = {:.3f}{:.3f}e^{{{:.3f}z_f}}$',
         },
         "eta_rcv": {
             "label_y": r"Optimal Receiver Efficiency $\eta_{rcv} (-)$",
-            "func_fit": func4,
-            "p0": (0.3, 0.01, 0.7),
+            "func_fit": func3,
+            "p0": (0.5, -0.05, 0.7),
             "color": 'olive',
             "marker": "o",
-            "eq_text": r'$\eta_{{rcv}} = {:.3f}-{:.3f}e^{{-{:.3f}z_f}}$',
+            "eq_text": r'$\eta_{{rcv}} = {:.3f}{:.3f}e^{{{:.3f}z_f}}$',
         },
         "tod_surface_area": {
             "label_y": r"Optimal TOD Surface Area ($m^2$)",
@@ -317,7 +309,7 @@ def final_optimization_plot(
             "p0": (200., 0.2),
             "color": 'coral',
             "marker": "o",
-            "eq_text": r'${:.3f}e^{{-{:.1f} z_f}}$',
+            "eq_text": r'${:.3f}e^{{{:.3f} z_f}}$',
         },
         "hb_surface_area": {
             "label_y": r"Optimal HB Surface Area ($m^2$)",
@@ -325,7 +317,7 @@ def final_optimization_plot(
             "p0": (200., 0.2),
             "color": 'slateblue',
             "marker": "o",
-            "eq_text": r'${:.3f}e^{{-{:.1f} z_f}}$',
+            "eq_text": r'${:.3f}e^{{{:.3f} z_f}}$',
         },
         "receiver_area": {
             "label_y": r"Optimal Receiver Area ($m^2$)",
@@ -333,14 +325,17 @@ def final_optimization_plot(
             "p0": (200., 0.2),
             "color": 'darkorange',
             "marker": "o",
-            "eq_text": r'${:.3f}e^{{-{:.1f} z_f}}$',
+            "eq_text": r'${:.3f}e^{{{:.3f} z_f}}$',
+        },
+        "S_land": {
+            "label_y": r"Land Surface ($ha$)",
+            "func_fit": func2,
+            "p0": (200., 0.2),
+            "color": 'darkorange',
+            "marker": "o",
+            "eq_text": r'${:.3f}e^{{{:.3f} z_f}}$',
         }
     }
-
-    # ### ADDITIONAL CORRELATIONS
-    # ylabs = {
-    #     'S_land': '$S_{land} (m^2)$',
-    # }
 
 
     VARX = "zf"
