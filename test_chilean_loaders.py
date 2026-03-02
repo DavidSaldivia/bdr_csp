@@ -1,5 +1,5 @@
 """Test script for Chilean data loaders with Protocol-based design."""
-from bdr_csp.pb_2 import (
+from bdr_csp.pb import (
     ModularCSPPlant,
     WeatherCL,
     MarketCL,

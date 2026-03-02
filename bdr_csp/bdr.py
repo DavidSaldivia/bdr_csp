@@ -25,7 +25,7 @@ from antupy import (
 
 
 if TYPE_CHECKING:
-    from bdr_csp.pb import ModularCSPPlant
+    from bdr_csp.pb_old import ModularCSPPlant
 
 
 R0_COLS = ['xi','yi','zi', 'uxi','uyi','uzi', 'hel']

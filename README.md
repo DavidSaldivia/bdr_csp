@@ -1,23 +1,104 @@
-# BDR_MCRT
-Python codes for optical analysis of Beam Down Receivers (BDR) using MonteCarlo Ray Tracing (MCRT) method. This repository contains the modules and example scripts for the work developed in my PhD thesis.
+# BDR_CSP - Concentrated Solar Power with Beam-Down Receivers
 
-This repository originally was created to have examples of the codes used in the publication "Optical analysis and optimization of a beam-down receiver for advanced cycle concentrating solar thermal plants" (Applied Thermal Engineering, 2021). These codes are now in the folder '2_Optical_Analysis_old'.
+Python codes for concentrated solar power (CSP) systems with Beam-Down Receivers (BDR) using Monte Carlo Ray Tracing (MCRT) analysis and thermal simulation.
 
-New versions of the code are in '2_Optical_Analysis'. The main difference between both is that the old version used iterations over datasets and parallelisation. The new code is completely vectorised and therefore quicker.
+## Core Modules (`bdr_csp/`)
 
-Additionally, folders '4_SBR_Model' and '5_SPR_Models' have the different receiver models. Folder '6_Thermal_Subsys_Optim' is the thermal optimisation (minimising the LCOH), while '7_Overall_Optim_Dispatch' has the dispatch model and the performance simulations under real conditions in Australia.
+The `bdr_csp` package contains five core modules, developed as part of my PhD thesis: [Design and Optimisation of Beam-Down Particle Receivers for High-Temperature Concentrating Solar Thermal Applications](https://doi.org/10.26190/unsworks/30144).
 
-The four modules developed in my thesis are:
-- 'BeamDownReceiver.py' in folder '2_Optic_Analysis'. Imported as BDR.
-- 'SolidBlockReceiver.py' in folder '4_SBR_Model'. Imported as SBR.
-- 'SolidParticleReceiver.py' in folder '5_SPR_Models'. Imported as SPR.
-- 'PerformancePowerCycle.py' in folder '7_Overall_Optim_Dispatch'. Imported as PPC.
+### 1. **bdr.py** - Beam Down Receiver Optical Analysis
+Primary module for optical simulation of beam-down receiver systems. Handles:
+- Solar field layout and heliostat geometry
+- Hyperboloid mirror optical properties
+- Tertiary optical devices
+- Ray tracing and flux calculations
+- Integration with `antupy` framework for building CSP plant models
 
-BDR and SBR can run on their own. SPR requires BDR, and PPC requires SPR and BDR. As a recommendation, download all the folders to ensure they work properly. Also, the folder names are included when the modules are imported.
+**Publications:**
+- [Optical analysis and optimization of a beam-down receiver for advanced cycle concentrating solar thermal plants](https://doi.org/10.1016/j.applthermaleng.2021.117405) (Applied Thermal Engineering, 2021)
+- [Effect of heliostat curvature on optical performance of beam-down systems](https://doi.org/10.1063/5.0149309) (AIP Conference Proceedings, 2023)
 
-To run any code, first, you need to create a ray dataset with SolarPILOT. For this:
-1. Launch SolarPILOT and 'Open' a project (Ctrl+O). Look for the file '0-SolarPilot_project.spt' in the folder '0_Data/MCRT_Datasets_Final'. This file contains the parameters used in my Thesis.
-2. Go to the Layout setup and select the tower height. Go to the tab Performance Simulation, and select SolTrace in 'Flux simulation model'. Tick "Save all raytrace data" and click on the left to select where to save the file. Then click 'Simulate performance'.
-3. Additionally, you can also run a script to generate several datasets. For example, go to 'open script' and select '0-script_rays_height.lk'. This allows to generate datasets between 20 and 100 m tower height (of course you can edit that too). It is important, before run the script, do step 2 and save the dataset file as "MCRT_TempDataset.csv". The script will rename that file for the specific height.
+### 2. **spr.py** - Solid Particle Receiver Components
+Implements solid particle receiver models that work with BDR optics:
+- **HPR0D** - Horizontal Particle Receiver (0D simplified model)
+- **HPR2D** - Horizontal Particle Receiver (2D detailed model)
+- **TPR2D** - Tilted Particle Receiver (2D model using granular flow)
+- Thermal absorption and simplified particle dynamics
+- Convection and radiation heat loss calculations
 
-To run the dispatch model you need MERRA-2 and NEM data. in '0_Data' there are scripts to download and process these files.
+**Publications:**
+- [Thermal simulation of beam-down particle receivers with different configurations](https://doi.org/10.52825/solarpaces.v1i.664) (SolarPACES, 2022)
+
+### 3. **pb.py** - Power Block and Thermodynamic Cycle
+Comprehensive thermal and power cycle simulation:
+- `ModularCSPPlant` - Integrated plant model combining optics and thermal systems
+- Power block thermal analysis
+- Energy balance calculations
+- Integration of BDR optics with particle receivers
+
+**Publications:**
+- [Thermal simulation of beam-down particle receivers with different configurations](https://doi.org/10.52825/solarpaces.v1i.664) (SolarPACES, 2022)
+- [Techno-economic assessment of the storage value of a novel modular Beam-Down
+Receiver CSP plant in Australia](https://www.ceem.unsw.edu.au/sites/default/files/documents/62.pdf) (APSRC, 2022)
+
+### 4. **htc.py** - Heat Transfer Correlations
+Heat transfer coefficient calculations:
+- Natural convection on surfaces
+- Radiative heat transfer
+- Custom correlations for receiver geometries
+
+### 5. **dir.py** - Directory and Path Management
+Utility module for managing file paths and data directories across the project.
+
+## Research Projects (`projects/`)
+
+### 1. **optics/** - Optical Analysis and Simulations
+Parametric optical analysis of beam-down receiver configurations using MCRT:
+- Solar field design for beam-down optics.
+- Different types of tertiary optical devices.
+- Performance simulations at single and multiple points.
+- Flux distribution analysis over receiver surface.
+
+### 2. **spr/** - Solid Particle Receiver Studies
+Detailed studies of particle receiver designs and performance:
+- HPR (Horizontal Particle Receiver) with conveyor belt analysis
+- TPR (Tilted Particle Receiver) with granular flow analysis
+- 2D thermal and simplified fluid dynamics modeling
+- HPR-TPR performance comparison
+- Results analysis and visualization
+
+### 3. **optim/** - Thermal System Optimization
+Thermal subsystem optimization focused on LCOH (Levelized Cost of Heat) minimization:
+- Annual performance calculations
+- Sensitivity analysis for thermal and economic performance
+- Bayesian optimization of thermal parameters
+
+### 4. **dispatch/** - Market Integration and Dispatch
+Integrated CSP system simulation and operational dispatch:
+- Real-world performance simulations in Australian NEM (National Electricity Market)
+- Dispatch model integration with real weather data
+- Alice Springs case study
+- Performance characterization under real operating conditions
+- Parametric dispatch analysis
+
+## Usage Notes
+
+- **Unified Framework**: All modules build on the `antupy` framework for consistent plant simulation
+- **Vectorized Operations**: Core modules use vectorized NumPy/Pandas operations for efficiency
+- **Data Dependencies**: Projects typically require MCRT ray datasets generated via SolarPILOT
+- **Module Relationships**: 
+  - `bdr` is foundational (used by `spr` and `pb`)
+  - `spr` depends on `bdr`
+  - `pb` integrates `bdr` and `spr`
+  - Projects use various combinations of these modules
+
+## Getting Started
+
+1. Install dependencies from `pyproject.toml`
+2. For optical analysis: Use projects in `optics/` with SolarPILOT ray datasets
+3. For receiver simulation: See examples in `spr/` project
+4. For complete system analysis: See the `optim/` or `dispatch/` modules.
+
+## Legacy Code
+
+Historical versions and earlier implementations are available in `old/` folder for reference.

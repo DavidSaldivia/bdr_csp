@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Tuple, Optional
 from enum import Enum
 
 from antupy import Var
-from bdr_csp.pb import ModularCSPPlant
+from bdr_csp.pb_old import ModularCSPPlant
 from bdr_csp.bdr import SolarField, HyperboloidMirror, TertiaryOpticalDevice
 from bdr_csp import spr as SPR
 

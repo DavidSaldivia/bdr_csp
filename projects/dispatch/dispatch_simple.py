@@ -7,14 +7,14 @@ import matplotlib.pyplot as plt
 
 from antupy import Var
 
-import bdr_csp.pb as pb
+import bdr_csp.pb_old as pb_old
 
 DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
 
-COLS_INPUT = pb.COLS_INPUT
-COLS_OUTPUT = pb.COLS_OUTPUT
+COLS_INPUT = pb_old.COLS_INPUT
+COLS_OUTPUT = pb_old.COLS_OUTPUT
 
-def get_data_location(plant: pb.ModularCSPPlant, location: int) -> None:
+def get_data_location(plant: pb_old.ModularCSPPlant, location: int) -> None:
     if location == 1:
         plant.lat = Var(-20.7,"deg")
         plant.lng = Var(139.5, "deg")
@@ -45,7 +45,7 @@ def get_data_location(plant: pb.ModularCSPPlant, location: int) -> None:
 
 
 def dispatch_single_case(
-        plant: pb.ModularCSPPlant,
+        plant: pb_old.ModularCSPPlant,
         year_i: int = 2019,
         year_f: int = 2019,
         ) -> dict:
@@ -61,8 +61,8 @@ def dispatch_single_case(
     
     dT = 0.5            #Time in hours
 
-    df_weather = pb.load_weather_data(latitude, longitude, year_i, year_f, dT)
-    df_sp = pb.load_spotprice_data(plant.state, year_i, year_f, dT)
+    df_weather = pb_old.load_weather_data(latitude, longitude, year_i, year_f, dT)
+    df_sp = pb_old.load_spotprice_data(plant.state, year_i, year_f, dT)
     df = df_weather.merge(df_sp, how="inner", left_index=True, right_index=True)
     
     dT = pd.to_datetime(df.index).freq
@@ -77,7 +77,7 @@ def dispatch_single_case(
     plant.storage_heat = plant.pb_power_th * stg_cap        #[MWh] Capacity of storage per tower
     
     # Annual performance
-    out = pb.annual_performance(plant, df)
+    out = pb_old.annual_performance(plant, df)
 
     date_sim = time.strftime("%Y/%m/%d %H:%M:%S", time.localtime())
     data.append([Ntower, stg_cap.v, solar_multiple.v, rcv_power.v, 
@@ -88,7 +88,7 @@ def dispatch_single_case(
 
 def main():
 
-    plant = pb.ModularCSPPlant(
+    plant = pb_old.ModularCSPPlant(
         zf = Var(50., "m"),
         fzv = Var(0.818161, "-"),
         rcv_power = Var(19.,"MW"),

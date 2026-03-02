@@ -27,7 +27,7 @@ from bdr_csp.bdr import (
 )
 
 if TYPE_CHECKING:
-    from bdr_csp.pb import ModularCSPPlant
+    from bdr_csp.pb_old import ModularCSPPlant
 
 DIR_DATA = DIRECTORY.DIR_DATA
 

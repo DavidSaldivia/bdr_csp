@@ -1,14 +1,11 @@
 import os
-import time
 
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 
 from antupy import Array, Var
 from antupy.analyser import Parametric
 
-import bdr_csp.pb_2 as pb
+import bdr_csp.pb as pb
 
 DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
 
@@ -22,7 +19,6 @@ def testing_plant_design_params():
         solar_multiple=Var(2.0, "-"),
         stg_cap=Var(8.0, "hr"),
     )
-
     pass
 
 

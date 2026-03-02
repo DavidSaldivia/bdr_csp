@@ -27,7 +27,7 @@ from bdr_csp.bdr import (
     HyperboloidMirror,
     TertiaryOpticalDevice,
 )
-from bdr_csp.pb import ModularCSPPlant
+from bdr_csp.pb_old import ModularCSPPlant
 from bdr_csp.dir import DIRECTORY
 
 DIR_PROJECT = os.path.dirname(os.path.abspath(__file__))
