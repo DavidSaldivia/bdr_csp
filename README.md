@@ -16,7 +16,7 @@ Primary module for optical simulation of beam-down receiver systems. Handles:
 
 **Publications:**
 - [Optical analysis and optimization of a beam-down receiver for advanced cycle concentrating solar thermal plants](https://doi.org/10.1016/j.applthermaleng.2021.117405) (Applied Thermal Engineering, 2021)
-- [Effect of heliostat curvature on optical performance of beam-down systems](https://doi.org/10.1063/5.0149309) (AIP Conference Proceedings, 2023)
+- [Optical optimization of beam down receiver geometry for high temperature heat processes using the MCRT method](https://doi.org/10.1063/5.0149309) (AIP Conference Proceedings, 2023)
 
 ### 2. **spr.py** - Solid Particle Receiver Components
 Implements solid particle receiver models that work with BDR optics:
